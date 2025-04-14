@@ -50,8 +50,8 @@ def process_file_task(self, file_id: str):
         # Parse the file
         content, has_images, page_count = parse_file(file_path, file_type)
 
-        # Create chunks
-        chunks = create_chunks_from_content(file_id, content)
+        # Create chunks using the hybrid chunking system
+        chunks = create_chunks_from_content(file_id, content, file_type)
 
         # Generate embeddings
         chunk_embedding_ids = self.embedding_service.embed_chunks(chunks)

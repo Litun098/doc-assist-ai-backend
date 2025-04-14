@@ -46,3 +46,5 @@ uploads/
 # OS specific
 .DS_Store
 Thumbs.db
+
+projectDetails.txt

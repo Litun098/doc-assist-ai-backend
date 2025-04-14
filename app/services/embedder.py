@@ -62,6 +62,21 @@ class EmbeddingService:
                         "description": "The index of this chunk within the file"
                     },
                     {
+                        "name": "chunking_strategy",
+                        "dataType": ["string"],
+                        "description": "The chunking strategy used (fixed_size or topic_based)"
+                    },
+                    {
+                        "name": "heading",
+                        "dataType": ["text"],
+                        "description": "The heading or title of the section (for topic-based chunks)"
+                    },
+                    {
+                        "name": "is_first_in_section",
+                        "dataType": ["boolean"],
+                        "description": "Whether this chunk is the first in its section"
+                    },
+                    {
                         "name": "metadata",
                         "dataType": ["text"],
                         "description": "Additional metadata about the chunk"

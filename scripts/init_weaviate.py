@@ -12,17 +12,17 @@ def init_weaviate():
     if not settings.WEAVIATE_URL or not settings.WEAVIATE_API_KEY:
         print("Weaviate URL or API key not set. Skipping initialization.")
         return
-    
+
     # Initialize Weaviate client
     client = weaviate.Client(
         url=settings.WEAVIATE_URL,
         auth_client_secret=weaviate.AuthApiKey(api_key=settings.WEAVIATE_API_KEY)
     )
-    
+
     # Check if schema exists
     schema = client.schema.get()
     classes = [c["class"] for c in schema["classes"]] if "classes" in schema else []
-    
+
     # Create schema if it doesn't exist
     if "DocumentChunk" not in classes:
         print("Creating DocumentChunk class in Weaviate...")
@@ -50,6 +50,21 @@ def init_weaviate():
                     "name": "chunk_index",
                     "dataType": ["int"],
                     "description": "The index of this chunk within the file"
+                },
+                {
+                    "name": "chunking_strategy",
+                    "dataType": ["string"],
+                    "description": "The chunking strategy used (fixed_size or topic_based)"
+                },
+                {
+                    "name": "heading",
+                    "dataType": ["text"],
+                    "description": "The heading or title of the section (for topic-based chunks)"
+                },
+                {
+                    "name": "is_first_in_section",
+                    "dataType": ["boolean"],
+                    "description": "Whether this chunk is the first in its section"
                 },
                 {
                     "name": "metadata",

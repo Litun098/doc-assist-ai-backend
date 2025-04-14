@@ -13,6 +13,7 @@ from pathlib import Path
 
 from app.models.db_models import FileType, Chunk
 from config.config import settings
+from app.services.chunker import create_chunks_from_content
 
 
 def determine_file_type(filename: str) -> FileType:
@@ -207,32 +208,4 @@ def chunk_text(text: str, chunk_size: int = 1000, chunk_overlap: int = 200) -> L
     return chunks
 
 
-def create_chunks_from_content(file_id: str, content: List[str]) -> List[Chunk]:
-    """Create chunks from file content"""
-    chunks = []
-    chunk_index = 0
-
-    for page_num, page_content in enumerate(content):
-        page_chunks = chunk_text(
-            page_content,
-            chunk_size=settings.CHUNK_SIZE,
-            chunk_overlap=settings.CHUNK_OVERLAP
-        )
-
-        for chunk_text in page_chunks:
-            chunk = Chunk(
-                id=str(uuid.uuid4()),
-                file_id=file_id,
-                content=chunk_text,
-                page_number=page_num + 1,
-                chunk_index=chunk_index,
-                created_at=datetime.now(),
-                metadata={
-                    "page_number": page_num + 1,
-                    "chunk_index": chunk_index
-                }
-            )
-            chunks.append(chunk)
-            chunk_index += 1
-
-    return chunks
+# This function is now imported from app.services.chunker
