@@ -34,6 +34,17 @@ class Settings:
 
     # Redis (for Celery)
     REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    UPSTASH_REDIS_REST_URL = os.getenv("UPSTASH_REDIS_REST_URL")
+    UPSTASH_REDIS_REST_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN")
+    UPSTASH_REDIS_PORT = int(os.getenv("UPSTASH_REDIS_PORT", "6379"))
+
+    # Use Upstash Redis if configured
+    USE_UPSTASH_REDIS = bool(UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN)
+
+    # For Celery with Upstash Redis
+    CELERY_BROKER_USE_SSL = {
+        'ssl_cert_reqs': 'CERT_NONE'
+    } if REDIS_URL and REDIS_URL.startswith('rediss://') else None
 
     # File upload settings
     UPLOAD_DIR = "uploads"
