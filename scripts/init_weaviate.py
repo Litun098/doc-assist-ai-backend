@@ -2,6 +2,13 @@ import weaviate
 import sys
 import os
 
+# For newer Weaviate client
+try:
+    from weaviate.classes.init import Auth
+    USING_NEW_CLIENT = True
+except ImportError:
+    USING_NEW_CLIENT = False
+
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -14,10 +21,16 @@ def init_weaviate():
         return
 
     # Initialize Weaviate client
-    client = weaviate.Client(
-        url=settings.WEAVIATE_URL,
-        auth_client_secret=weaviate.AuthApiKey(api_key=settings.WEAVIATE_API_KEY)
-    )
+    if USING_NEW_CLIENT:
+        client = weaviate.connect_to_weaviate_cloud(
+            cluster_url=settings.WEAVIATE_URL,
+            auth_credentials=Auth.api_key(settings.WEAVIATE_API_KEY),
+        )
+    else:
+        client = weaviate.Client(
+            url=settings.WEAVIATE_URL,
+            auth_client_secret=weaviate.AuthApiKey(api_key=settings.WEAVIATE_API_KEY)
+        )
 
     # Check if schema exists
     schema = client.schema.get()

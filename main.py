@@ -1,9 +1,11 @@
 import os
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import router as api_router
+from app.api.standalone_agent_routes import router as standalone_agent_router
+from app.api.simple_combined_routes import router as simple_combined_router
 from config.config import settings
 
 # Create uploads directory if it doesn't exist
@@ -27,6 +29,12 @@ app.add_middleware(
 
 # Mount API routes
 app.include_router(api_router, prefix=settings.API_PREFIX)
+
+# Mount Standalone Agent routes
+app.include_router(standalone_agent_router, prefix=settings.API_PREFIX)
+
+# Mount Simple Combined Agent routes
+app.include_router(simple_combined_router, prefix=settings.API_PREFIX)
 
 # Mount static files for uploads (for development only)
 app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")

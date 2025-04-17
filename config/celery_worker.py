@@ -1,29 +1,22 @@
 from celery import Celery
-from config.config import settings
 
-# Configure Celery based on available Redis options
-broker_url = settings.REDIS_URL
-backend_url = settings.REDIS_URL
+# For development, use SQLite-based broker and backend
+import os
+
+# Create directory for Celery results if it doesn't exist
+celery_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'celery')
+os.makedirs(celery_dir, exist_ok=True)
+
+# Use SQLite for both broker and backend
+sqlite_db_path = os.path.join(celery_dir, 'celery.sqlite')
+
+print("Using SQLite-based broker for Celery (development mode)")
+broker_url = f'sqla+sqlite:///{sqlite_db_path}'
+backend_url = f'db+sqlite:///{sqlite_db_path}'
+
+# No special kwargs needed for SQLite
 broker_kwargs = {}
 backend_kwargs = {}
-
-# Configure SSL if using Upstash Redis with rediss:// URL
-if settings.CELERY_BROKER_USE_SSL:
-    broker_kwargs['ssl_cert_reqs'] = 'CERT_NONE'
-    backend_kwargs['ssl_cert_reqs'] = 'CERT_NONE'
-
-# Add Upstash REST API configuration if available
-if settings.USE_UPSTASH_REDIS:
-    # For Upstash Redis, we'll still use the Redis URL for Celery's connection
-    # but we'll add additional configuration for our custom client
-    broker_kwargs.update({
-        'rest_url': settings.UPSTASH_REDIS_REST_URL,
-        'rest_token': settings.UPSTASH_REDIS_REST_TOKEN
-    })
-    backend_kwargs.update({
-        'rest_url': settings.UPSTASH_REDIS_REST_URL,
-        'rest_token': settings.UPSTASH_REDIS_REST_TOKEN
-    })
 
 celery_app = Celery(
     "anydocai",

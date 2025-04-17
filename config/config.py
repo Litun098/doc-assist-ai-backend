@@ -33,13 +33,15 @@ class Settings:
     S3_REGION = os.getenv("S3_REGION")
 
     # Redis (for Celery)
-    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     UPSTASH_REDIS_REST_URL = os.getenv("UPSTASH_REDIS_REST_URL")
     UPSTASH_REDIS_REST_TOKEN = os.getenv("UPSTASH_REDIS_REST_TOKEN")
     UPSTASH_REDIS_PORT = int(os.getenv("UPSTASH_REDIS_PORT", "6379"))
 
     # Use Upstash Redis if configured
     USE_UPSTASH_REDIS = bool(UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN)
+
+    # Fallback to local Redis if Upstash is not configured
+    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
     # For Celery with Upstash Redis
     CELERY_BROKER_USE_SSL = {
@@ -76,9 +78,18 @@ class Settings:
     FIXED_SIZE_FILETYPES = [FileType.XLSX, FileType.PPTX]
 
     # Model settings
-    DEFAULT_MODEL = "gpt-4-turbo"
+    DEFAULT_MODEL = "gpt-3.5-turbo"  # Using GPT-3.5 for development
     FREE_MODEL = "gpt-3.5-turbo"
     EMBEDDING_MODEL = "text-embedding-3-small"
     VISION_MODEL = "gpt-4-vision-preview"
+
+    # Future model settings (for production)
+    # DEFAULT_MODEL = "gpt-4-turbo"
+
+    # LlamaIndex settings
+    LLAMAINDEX_CHUNK_SIZE = 1000
+    LLAMAINDEX_CHUNK_OVERLAP = 200
+    LLAMAINDEX_SIMILARITY_TOP_K = 5  # Number of chunks to retrieve for each query
+    LLAMAINDEX_INDEX_NAME = "DocumentChunks"  # Name of the index in Weaviate
 
 settings = Settings()

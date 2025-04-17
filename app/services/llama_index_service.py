@@ -1,0 +1,613 @@
+"""
+LlamaIndex service for document processing, indexing, and querying.
+"""
+import os
+import uuid
+from typing import List, Dict, Any, Optional, Tuple, Union
+from datetime import datetime
+import asyncio
+import logging
+from enum import Enum
+
+# LlamaIndex imports
+from llama_index.core import (
+    VectorStoreIndex,
+    SimpleDirectoryReader,
+    Document,
+    StorageContext,
+    Settings,
+    ServiceContext,
+)
+from llama_index.core.node_parser import SentenceSplitter, NodeParser
+from llama_index.core.schema import MetadataMode, TextNode
+from llama_index.core.node_parser import SimpleNodeParser
+from llama_index.core.ingestion import IngestionPipeline
+from llama_index.embeddings.openai import OpenAIEmbedding
+from llama_index.llms.openai import OpenAI
+from llama_index.vector_stores.weaviate import WeaviateVectorStore
+import weaviate
+from weaviate.classes.init import Auth
+
+# FastAPI imports
+from fastapi import UploadFile, HTTPException
+
+# Local imports
+from app.models.db_models import FileType, FileStatus, Chunk
+from config.config import settings
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+
+class ChunkingStrategy(str, Enum):
+    """Chunking strategies for document processing."""
+    FIXED_SIZE = "fixed_size"
+    SEMANTIC = "semantic"
+    HYBRID = "hybrid"
+
+
+class LlamaIndexService:
+    """Service for document processing using LlamaIndex."""
+
+    def __init__(self):
+        """Initialize the LlamaIndex service."""
+        # Configure LlamaIndex settings
+        Settings.llm = OpenAI(
+            model=settings.DEFAULT_MODEL,
+            api_key=settings.OPENAI_API_KEY,
+            temperature=0.1
+        )
+        Settings.embed_model = OpenAIEmbedding(
+            model_name=settings.EMBEDDING_MODEL,
+            api_key=settings.OPENAI_API_KEY,
+            embed_batch_size=10,  # Process 10 chunks at a time to avoid rate limits
+        )
+
+        # Initialize Weaviate client if configured
+        self.weaviate_client = None
+        self.vector_store = None
+        if settings.WEAVIATE_URL and settings.WEAVIATE_API_KEY:
+            try:
+                # Try the new Weaviate client format first
+                self.weaviate_client = weaviate.connect_to_weaviate_cloud(
+                    cluster_url=settings.WEAVIATE_URL,
+                    auth_credentials=Auth.api_key(settings.WEAVIATE_API_KEY),
+                )
+                # Create vector store
+                self.vector_store = WeaviateVectorStore(
+                    weaviate_client=self.weaviate_client,
+                    index_name=settings.LLAMAINDEX_INDEX_NAME,
+                    text_key="content",
+                    metadata_keys=["file_id", "user_id", "page_number", "chunk_index", "heading", "chunking_strategy"]
+                )
+                # Ensure schema exists
+                self._ensure_schema()
+            except Exception as e:
+                logger.error(f"Error connecting to Weaviate: {str(e)}")
+                self.weaviate_client = None
+                self.vector_store = None
+
+        # Create service context
+        self.service_context = ServiceContext.from_defaults(
+            llm=Settings.llm,
+            embed_model=Settings.embed_model,
+            chunk_size=settings.LLAMAINDEX_CHUNK_SIZE,
+            chunk_overlap=settings.LLAMAINDEX_CHUNK_OVERLAP,
+        )
+
+        # Create storage context if vector store is available
+        self.storage_context = None
+        if self.vector_store:
+            self.storage_context = StorageContext.from_defaults(
+                vector_store=self.vector_store
+            )
+
+    def _ensure_schema(self):
+        """Ensure the Weaviate schema exists."""
+        if not self.weaviate_client:
+            return
+
+        # Check if schema exists
+        schema = self.weaviate_client.schema.get()
+        classes = [c["class"] for c in schema["classes"]] if "classes" in schema else []
+
+        # Create schema if it doesn't exist
+        if settings.LLAMAINDEX_INDEX_NAME not in classes:
+            class_obj = {
+                "class": settings.LLAMAINDEX_INDEX_NAME,
+                "description": "Document chunks for semantic search",
+                "vectorizer": "none",  # We'll provide our own vectors
+                "properties": [
+                    {
+                        "name": "content",
+                        "dataType": ["text"],
+                        "description": "The text content of the chunk"
+                    },
+                    {
+                        "name": "file_id",
+                        "dataType": ["string"],
+                        "description": "The ID of the file this chunk belongs to"
+                    },
+                    {
+                        "name": "user_id",
+                        "dataType": ["string"],
+                        "description": "The ID of the user who owns this chunk"
+                    },
+                    {
+                        "name": "page_number",
+                        "dataType": ["int"],
+                        "description": "The page number this chunk is from"
+                    },
+                    {
+                        "name": "chunk_index",
+                        "dataType": ["int"],
+                        "description": "The index of this chunk within the file"
+                    },
+                    {
+                        "name": "heading",
+                        "dataType": ["text"],
+                        "description": "The heading or title of the section"
+                    },
+                    {
+                        "name": "chunking_strategy",
+                        "dataType": ["string"],
+                        "description": "The chunking strategy used (fixed_size, semantic, hybrid)"
+                    },
+                    {
+                        "name": "metadata",
+                        "dataType": ["text"],
+                        "description": "Additional metadata about the chunk"
+                    }
+                ]
+            }
+            self.weaviate_client.schema.create_class(class_obj)
+            logger.info("Created DocumentChunks class in Weaviate")
+
+    async def process_file(self, file_path: str, file_id: str, user_id: str,
+                          file_type: FileType, chunking_strategy: ChunkingStrategy = ChunkingStrategy.HYBRID) -> Dict[str, Any]:
+        """
+        Process a file using LlamaIndex.
+
+        Args:
+            file_path: Path to the file
+            file_id: Unique ID for the file
+            user_id: ID of the user who uploaded the file
+            file_type: Type of the file
+            chunking_strategy: Chunking strategy to use
+
+        Returns:
+            Dict containing processing results
+        """
+        try:
+            # Load the document
+            documents = await self._load_document(file_path, file_type)
+
+            # Check if document has images
+            has_images = self._check_for_images(documents, file_type)
+
+            # Get page count
+            page_count = len(documents)
+
+            # Create nodes with appropriate chunking strategy
+            nodes = await self._create_nodes(documents, file_id, user_id, chunking_strategy)
+
+            # Create index
+            if self.storage_context:
+                # Use vector store if available
+                index = VectorStoreIndex(
+                    nodes=nodes,
+                    storage_context=self.storage_context,
+                    service_context=self.service_context,
+                )
+            else:
+                # Use in-memory index if no vector store
+                index = VectorStoreIndex(
+                    nodes=nodes,
+                    service_context=self.service_context,
+                )
+
+            # Create chunks for database storage
+            chunks = self._create_chunks_from_nodes(nodes, file_id)
+
+            return {
+                "file_id": file_id,
+                "status": "processed",
+                "page_count": page_count,
+                "has_images": has_images,
+                "chunk_count": len(chunks),
+                "chunks": chunks
+            }
+
+        except Exception as e:
+            logger.error(f"Error processing file {file_id}: {str(e)}")
+            raise
+
+    async def _load_document(self, file_path: str, file_type: FileType) -> List[Document]:
+        """
+        Load a document using LlamaIndex.
+
+        Args:
+            file_path: Path to the file
+            file_type: Type of the file
+
+        Returns:
+            List of Document objects
+        """
+        try:
+            # Use SimpleDirectoryReader to load the document
+            # This handles various file types automatically
+            documents = SimpleDirectoryReader(
+                input_files=[file_path],
+                filename_as_id=True
+            ).load_data()
+
+            # If the document is loaded as a single document but has multiple pages,
+            # split it into multiple documents by page
+            if len(documents) == 1 and file_type in [FileType.PDF, FileType.DOCX, FileType.PPTX]:
+                # Try to split by pages based on page breaks or slide markers
+                text = documents[0].text
+
+                if file_type == FileType.PDF:
+                    # Split by form feeds or other page markers
+                    pages = text.split("\f")
+                elif file_type == FileType.PPTX:
+                    # For PowerPoint, try to identify slide breaks (this is approximate)
+                    pages = text.split("\n\n\n\n")
+                else:
+                    # For other documents, split by multiple newlines as a heuristic
+                    pages = text.split("\n\n\n")
+
+                # Filter out empty pages
+                pages = [page.strip() for page in pages if page.strip()]
+
+                if len(pages) > 1:
+                    # Create a document for each page
+                    documents = [
+                        Document(
+                            text=page,
+                            metadata={
+                                "page_number": i + 1,
+                                "file_path": file_path,
+                                "file_type": file_type.value
+                            }
+                        )
+                        for i, page in enumerate(pages)
+                    ]
+                else:
+                    # Add page metadata to the single document
+                    documents[0].metadata["page_number"] = 1
+                    documents[0].metadata["file_path"] = file_path
+                    documents[0].metadata["file_type"] = file_type.value
+
+            return documents
+
+        except Exception as e:
+            logger.error(f"Error loading document {file_path}: {str(e)}")
+            raise
+
+    def _check_for_images(self, documents: List[Document], file_type: FileType) -> bool:
+        """
+        Check if a document contains images.
+
+        Args:
+            documents: List of Document objects
+            file_type: Type of the file
+
+        Returns:
+            True if the document contains images, False otherwise
+        """
+        # For now, we'll use a simple heuristic based on file type
+        # In a more advanced implementation, we could analyze the document content
+        if file_type in [FileType.PDF, FileType.DOCX, FileType.PPTX]:
+            # These file types commonly contain images
+            # For a more accurate check, we would need to parse the document structure
+            return True
+
+        return False
+
+    async def _create_nodes(self, documents: List[Document], file_id: str, user_id: str,
+                           chunking_strategy: ChunkingStrategy) -> List[TextNode]:
+        """
+        Create nodes from documents using the specified chunking strategy.
+
+        Args:
+            documents: List of Document objects
+            file_id: Unique ID for the file
+            user_id: ID of the user who uploaded the file
+            chunking_strategy: Chunking strategy to use
+
+        Returns:
+            List of TextNode objects
+        """
+        nodes = []
+
+        if chunking_strategy == ChunkingStrategy.FIXED_SIZE:
+            # Use simple fixed-size chunking
+            node_parser = SimpleNodeParser.from_defaults(
+                chunk_size=settings.CHUNK_SIZE,
+                chunk_overlap=settings.CHUNK_OVERLAP
+            )
+        elif chunking_strategy == ChunkingStrategy.SEMANTIC:
+            # Use sentence-based chunking for more semantic coherence
+            node_parser = SentenceSplitter(
+                chunk_size=settings.CHUNK_SIZE,
+                chunk_overlap=settings.CHUNK_OVERLAP,
+                paragraph_separator="\n\n",
+                secondary_chunking_regex="[^,.;。]+[,.;。]?",
+            )
+        else:  # ChunkingStrategy.HYBRID (default)
+            # Use a combination based on document type
+            # For now, we'll use the same as SEMANTIC, but this could be enhanced
+            node_parser = SentenceSplitter(
+                chunk_size=settings.CHUNK_SIZE,
+                chunk_overlap=settings.CHUNK_OVERLAP,
+                paragraph_separator="\n\n",
+                secondary_chunking_regex="[^,.;。]+[,.;。]?",
+            )
+
+        # Create an ingestion pipeline
+        pipeline = IngestionPipeline(
+            transformations=[node_parser],
+        )
+
+        # Process documents through the pipeline
+        for doc_idx, doc in enumerate(documents):
+            # Add file and user metadata to the document
+            doc.metadata["file_id"] = file_id
+            doc.metadata["user_id"] = user_id
+            doc.metadata["chunking_strategy"] = chunking_strategy
+
+            # If page_number is not set, use the document index
+            if "page_number" not in doc.metadata:
+                doc.metadata["page_number"] = doc_idx + 1
+
+        # Run the pipeline
+        nodes = pipeline.run(documents)
+
+        # Add additional metadata to nodes
+        for i, node in enumerate(nodes):
+            node.metadata["chunk_index"] = i
+
+            # Try to extract heading from the text
+            lines = node.text.split("\n")
+            if lines and len(lines[0]) < 100:  # Simple heuristic for headings
+                node.metadata["heading"] = lines[0]
+            else:
+                node.metadata["heading"] = None
+
+        return nodes
+
+    def _create_chunks_from_nodes(self, nodes: List[TextNode], file_id: str) -> List[Chunk]:
+        """
+        Create Chunk objects from TextNode objects for database storage.
+
+        Args:
+            nodes: List of TextNode objects
+            file_id: Unique ID for the file
+
+        Returns:
+            List of Chunk objects
+        """
+        chunks = []
+
+        for node in nodes:
+            # Create a Chunk object from the node
+            chunk = Chunk(
+                id=str(uuid.uuid4()),
+                file_id=file_id,
+                content=node.text,
+                page_number=node.metadata.get("page_number"),
+                chunk_index=node.metadata.get("chunk_index", 0),
+                embedding_id=node.id_,  # Use the node ID as the embedding ID
+                created_at=datetime.now(),
+                metadata={
+                    "page_number": node.metadata.get("page_number"),
+                    "chunk_index": node.metadata.get("chunk_index", 0),
+                    "heading": node.metadata.get("heading"),
+                    "chunking_strategy": node.metadata.get("chunking_strategy"),
+                    "file_id": file_id,
+                    "user_id": node.metadata.get("user_id"),
+                }
+            )
+            chunks.append(chunk)
+
+        return chunks
+
+    async def query_documents(self, query: str, file_ids: List[str], user_id: str,
+                             top_k: int = 5) -> Dict[str, Any]:
+        """
+        Query documents using LlamaIndex.
+
+        Args:
+            query: Query string
+            file_ids: List of file IDs to search in
+            user_id: ID of the user making the query
+            top_k: Number of results to return
+
+        Returns:
+            Dict containing query results
+        """
+        try:
+            if not self.vector_store:
+                raise HTTPException(status_code=500, detail="Vector store not configured")
+
+            # Build the query
+            vector_store_query = self.vector_store.as_retriever(
+                similarity_top_k=top_k,
+            )
+
+            # Add filters for file_ids and user_id
+            if file_ids:
+                # Create a filter for the specified file IDs and user ID
+                filter_dict = {
+                    "operator": "And",
+                    "operands": [
+                        {
+                            "operator": "Or",
+                            "operands": [
+                                {"path": ["file_id"], "operator": "Equal", "valueString": file_id}
+                                for file_id in file_ids
+                            ]
+                        },
+                        {
+                            "path": ["user_id"],
+                            "operator": "Equal",
+                            "valueString": user_id
+                        }
+                    ]
+                }
+                vector_store_query = self.vector_store.as_retriever(
+                    similarity_top_k=top_k,
+                    filters=filter_dict
+                )
+
+            # Get the query embedding (not needed when using retriever directly)
+            # query_embedding = Settings.embed_model.get_query_embedding(query)
+
+            # Execute the query
+            nodes = vector_store_query.retrieve(query)
+
+            # Create a response
+            llm = Settings.llm
+            response_text = llm.complete(
+                f"""You are AnyDocAI, an AI document assistant that helps users understand their documents.
+
+                Use the following context from the user's documents to answer their question. If you don't know the answer, say you don't know.
+                Don't try to make up an answer. Always be helpful, concise, and professional.
+
+                Context:
+                {' '.join([node.text for node in nodes])}
+
+                Question: {query}
+
+                Answer:"""
+            ).text
+
+            # Format the response
+            response = {
+                "response": response_text,
+                "source_documents": [
+                    {
+                        "content": node.text,
+                        "metadata": node.metadata,
+                        "score": node.score if hasattr(node, "score") else None
+                    }
+                    for node in nodes
+                ],
+                "model_used": Settings.llm.model_name
+            }
+
+            return response
+
+        except Exception as e:
+            logger.error(f"Error querying documents: {str(e)}")
+            raise
+
+    async def process_uploaded_file(self, file: UploadFile, user_id: str,
+                                   chunking_strategy: ChunkingStrategy = ChunkingStrategy.HYBRID) -> Dict[str, Any]:
+        """
+        Process an uploaded file.
+
+        Args:
+            file: Uploaded file
+            user_id: ID of the user who uploaded the file
+            chunking_strategy: Chunking strategy to use
+
+        Returns:
+            Dict containing processing results
+        """
+        try:
+            # Check file size
+            file.file.seek(0, os.SEEK_END)
+            file_size = file.file.tell()
+            file.file.seek(0)
+
+            if file_size > settings.MAX_UPLOAD_SIZE:
+                raise HTTPException(status_code=400, detail="File too large")
+
+            # Determine file type
+            file_type = self._determine_file_type(file.filename)
+            if file_type == FileType.UNKNOWN:
+                raise HTTPException(status_code=400, detail="Unsupported file type")
+
+            # Generate a unique ID for the file
+            file_id = str(uuid.uuid4())
+
+            # Save the file temporarily
+            temp_file_path = os.path.join(settings.UPLOAD_DIR, f"{file_id}.{file_type.value}")
+            os.makedirs(os.path.dirname(temp_file_path), exist_ok=True)
+
+            with open(temp_file_path, "wb") as buffer:
+                content = file.file.read()
+                buffer.write(content)
+                file.file.seek(0)
+
+            # Process the file
+            result = await self.process_file(
+                file_path=temp_file_path,
+                file_id=file_id,
+                user_id=user_id,
+                file_type=file_type,
+                chunking_strategy=chunking_strategy
+            )
+
+            # Create file record
+            file_record = {
+                "id": file_id,
+                "user_id": user_id,
+                "filename": file.filename,
+                "original_filename": file.filename,
+                "file_type": file_type,
+                "file_size": file_size,
+                "status": FileStatus.PROCESSED,
+                "s3_key": temp_file_path,  # For now, just store the local path
+                "created_at": datetime.now(),
+                "updated_at": datetime.now(),
+                "processed_at": datetime.now(),
+                "page_count": result.get("page_count", 0),
+                "has_images": result.get("has_images", False)
+            }
+
+            # TODO: Save file record to database
+
+            # Return the result
+            return {
+                "id": file_id,
+                "filename": file.filename,
+                "file_type": file_type,
+                "file_size": file_size,
+                "status": FileStatus.PROCESSED,
+                "created_at": datetime.now(),
+                "chunks": result.get("chunks", [])
+            }
+
+        except Exception as e:
+            logger.error(f"Error processing uploaded file: {str(e)}")
+            raise
+
+    def _determine_file_type(self, filename: str) -> FileType:
+        """
+        Determine the file type from the filename.
+
+        Args:
+            filename: Name of the file
+
+        Returns:
+            FileType enum value
+        """
+        extension = filename.split(".")[-1].lower()
+        if extension in ["pdf"]:
+            return FileType.PDF
+        elif extension in ["docx", "doc"]:
+            return FileType.DOCX
+        elif extension in ["xlsx", "xls"]:
+            return FileType.XLSX
+        elif extension in ["pptx", "ppt"]:
+            return FileType.PPTX
+        elif extension in ["txt"]:
+            return FileType.TXT
+        else:
+            return FileType.UNKNOWN
+
+# Create a singleton instance
+llama_index_service = LlamaIndexService()

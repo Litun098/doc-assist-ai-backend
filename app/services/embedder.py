@@ -16,10 +16,19 @@ class EmbeddingService:
 
         # Initialize Weaviate client
         if settings.WEAVIATE_URL and settings.WEAVIATE_API_KEY:
-            self.weaviate_client = weaviate.Client(
-                url=settings.WEAVIATE_URL,
-                auth_client_secret=weaviate.AuthApiKey(api_key=settings.WEAVIATE_API_KEY)
-            )
+            try:
+                # Try the new Weaviate client format first
+                from weaviate.classes.init import Auth
+                self.weaviate_client = weaviate.connect_to_weaviate_cloud(
+                    cluster_url=settings.WEAVIATE_URL,
+                    auth_credentials=Auth.api_key(settings.WEAVIATE_API_KEY),
+                )
+            except (ImportError, AttributeError):
+                # Fall back to the older client format
+                self.weaviate_client = weaviate.Client(
+                    url=settings.WEAVIATE_URL,
+                    auth_client_secret=weaviate.AuthApiKey(api_key=settings.WEAVIATE_API_KEY)
+                )
             self._ensure_schema()
         else:
             self.weaviate_client = None

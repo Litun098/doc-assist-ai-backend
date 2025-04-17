@@ -4,6 +4,7 @@ python-multipart==0.0.9
 pydantic==2.6.1
 celery==5.3.6
 redis==5.0.1
+sqlalchemy==2.0.27
 langchain==0.1.9
 langchain-openai==0.0.5
 openai==1.12.0
