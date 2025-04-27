@@ -3,9 +3,9 @@ LlamaIndex service for document processing, indexing, and querying.
 """
 import os
 import uuid
-from typing import List, Dict, Any, Optional, Tuple, Union
+from typing import List, Dict, Any
 from datetime import datetime
-import asyncio
+# import asyncio
 import logging
 from enum import Enum
 
@@ -16,10 +16,9 @@ from llama_index.core import (
     Document,
     StorageContext,
     Settings,
-    ServiceContext,
 )
-from llama_index.core.node_parser import SentenceSplitter, NodeParser
-from llama_index.core.schema import MetadataMode, TextNode
+from llama_index.core.node_parser import SentenceSplitter
+from llama_index.core.schema import TextNode
 from llama_index.core.node_parser import SimpleNodeParser
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.embeddings.openai import OpenAIEmbedding
@@ -68,32 +67,30 @@ class LlamaIndexService:
         self.vector_store = None
         if settings.WEAVIATE_URL and settings.WEAVIATE_API_KEY:
             try:
-                # Try the new Weaviate client format first
+                # Connect to Weaviate cloud using the updated client API
                 self.weaviate_client = weaviate.connect_to_weaviate_cloud(
                     cluster_url=settings.WEAVIATE_URL,
                     auth_credentials=Auth.api_key(settings.WEAVIATE_API_KEY),
                 )
-                # Create vector store
+
+                # Create vector store with the updated API
                 self.vector_store = WeaviateVectorStore(
                     weaviate_client=self.weaviate_client,
                     index_name=settings.LLAMAINDEX_INDEX_NAME,
                     text_key="content",
                     metadata_keys=["file_id", "user_id", "page_number", "chunk_index", "heading", "chunking_strategy"]
                 )
-                # Ensure schema exists
-                self._ensure_schema()
+
+                # Create schema if it doesn't exist
+                self._create_schema_if_not_exists()
             except Exception as e:
                 logger.error(f"Error connecting to Weaviate: {str(e)}")
                 self.weaviate_client = None
                 self.vector_store = None
 
-        # Create service context
-        self.service_context = ServiceContext.from_defaults(
-            llm=Settings.llm,
-            embed_model=Settings.embed_model,
-            chunk_size=settings.LLAMAINDEX_CHUNK_SIZE,
-            chunk_overlap=settings.LLAMAINDEX_CHUNK_OVERLAP,
-        )
+        # Set global settings instead of using ServiceContext (which is deprecated)
+        Settings.chunk_size = settings.LLAMAINDEX_CHUNK_SIZE
+        Settings.chunk_overlap = settings.LLAMAINDEX_CHUNK_OVERLAP
 
         # Create storage context if vector store is available
         self.storage_context = None
@@ -102,66 +99,80 @@ class LlamaIndexService:
                 vector_store=self.vector_store
             )
 
-    def _ensure_schema(self):
-        """Ensure the Weaviate schema exists."""
+    def _create_schema_if_not_exists(self):
+        """Create Weaviate schema if it doesn't exist."""
         if not self.weaviate_client:
             return
 
-        # Check if schema exists
-        schema = self.weaviate_client.schema.get()
-        classes = [c["class"] for c in schema["classes"]] if "classes" in schema else []
+        try:
+            # Check if the collection exists
+            try:
+                collections = self.weaviate_client.collections.list_all()
+                collection_names = []
+                for collection in collections:
+                    if hasattr(collection, 'name'):
+                        collection_names.append(collection.name)
+                    elif isinstance(collection, str):
+                        collection_names.append(collection)
+                    elif isinstance(collection, dict) and 'name' in collection:
+                        collection_names.append(collection['name'])
+            except Exception as e:
+                logger.error(f"Error listing collections: {str(e)}")
+                collection_names = []
 
-        # Create schema if it doesn't exist
-        if settings.LLAMAINDEX_INDEX_NAME not in classes:
-            class_obj = {
-                "class": settings.LLAMAINDEX_INDEX_NAME,
-                "description": "Document chunks for semantic search",
-                "vectorizer": "none",  # We'll provide our own vectors
-                "properties": [
-                    {
-                        "name": "content",
-                        "dataType": ["text"],
-                        "description": "The text content of the chunk"
-                    },
-                    {
-                        "name": "file_id",
-                        "dataType": ["string"],
-                        "description": "The ID of the file this chunk belongs to"
-                    },
-                    {
-                        "name": "user_id",
-                        "dataType": ["string"],
-                        "description": "The ID of the user who owns this chunk"
-                    },
-                    {
-                        "name": "page_number",
-                        "dataType": ["int"],
-                        "description": "The page number this chunk is from"
-                    },
-                    {
-                        "name": "chunk_index",
-                        "dataType": ["int"],
-                        "description": "The index of this chunk within the file"
-                    },
-                    {
-                        "name": "heading",
-                        "dataType": ["text"],
-                        "description": "The heading or title of the section"
-                    },
-                    {
-                        "name": "chunking_strategy",
-                        "dataType": ["string"],
-                        "description": "The chunking strategy used (fixed_size, semantic, hybrid)"
-                    },
-                    {
-                        "name": "metadata",
-                        "dataType": ["text"],
-                        "description": "Additional metadata about the chunk"
-                    }
-                ]
-            }
-            self.weaviate_client.schema.create_class(class_obj)
-            logger.info("Created DocumentChunks class in Weaviate")
+            # Create collection if it doesn't exist
+            if settings.LLAMAINDEX_INDEX_NAME not in collection_names:
+                # Create a new collection
+                self.weaviate_client.collections.create(
+                    name=settings.LLAMAINDEX_INDEX_NAME,
+                    description="Document chunks for semantic search",
+                    vectorizer_config=None,  # We'll provide our own vectors
+                    properties=[
+                        {
+                            "name": "content",
+                            "dataType": ["text"],
+                            "description": "The text content of the chunk"
+                        },
+                        {
+                            "name": "file_id",
+                            "dataType": ["text"],
+                            "description": "The ID of the file this chunk belongs to"
+                        },
+                        {
+                            "name": "user_id",
+                            "dataType": ["text"],
+                            "description": "The ID of the user who owns this chunk"
+                        },
+                        {
+                            "name": "page_number",
+                            "dataType": ["int"],
+                            "description": "The page number this chunk is from"
+                        },
+                        {
+                            "name": "chunk_index",
+                            "dataType": ["int"],
+                            "description": "The index of this chunk within the file"
+                        },
+                        {
+                            "name": "heading",
+                            "dataType": ["text"],
+                            "description": "The heading or title of the section"
+                        },
+                        {
+                            "name": "chunking_strategy",
+                            "dataType": ["text"],
+                            "description": "The chunking strategy used (fixed_size, semantic, hybrid)"
+                        },
+                        {
+                            "name": "metadata",
+                            "dataType": ["text"],
+                            "description": "Additional metadata about the chunk"
+                        }
+                    ]
+                )
+                logger.info(f"Created collection {settings.LLAMAINDEX_INDEX_NAME} in Weaviate")
+        except Exception as e:
+            logger.error(f"Error creating Weaviate schema: {str(e)}")
 
     async def process_file(self, file_path: str, file_id: str, user_id: str,
                           file_type: FileType, chunking_strategy: ChunkingStrategy = ChunkingStrategy.HYBRID) -> Dict[str, Any]:
@@ -194,16 +205,14 @@ class LlamaIndexService:
             # Create index
             if self.storage_context:
                 # Use vector store if available
-                index = VectorStoreIndex(
+                VectorStoreIndex(
                     nodes=nodes,
                     storage_context=self.storage_context,
-                    service_context=self.service_context,
                 )
             else:
                 # Use in-memory index if no vector store
-                index = VectorStoreIndex(
+                VectorStoreIndex(
                     nodes=nodes,
-                    service_context=self.service_context,
                 )
 
             # Create chunks for database storage
@@ -285,12 +294,12 @@ class LlamaIndexService:
             logger.error(f"Error loading document {file_path}: {str(e)}")
             raise
 
-    def _check_for_images(self, documents: List[Document], file_type: FileType) -> bool:
+    def _check_for_images(self, _docs: List[Document], file_type: FileType) -> bool:
         """
         Check if a document contains images.
 
         Args:
-            documents: List of Document objects
+            _docs: List of Document objects (unused)
             file_type: Type of the file
 
         Returns:
@@ -551,22 +560,22 @@ class LlamaIndexService:
                 chunking_strategy=chunking_strategy
             )
 
-            # Create file record
-            file_record = {
-                "id": file_id,
-                "user_id": user_id,
-                "filename": file.filename,
-                "original_filename": file.filename,
-                "file_type": file_type,
-                "file_size": file_size,
-                "status": FileStatus.PROCESSED,
-                "s3_key": temp_file_path,  # For now, just store the local path
-                "created_at": datetime.now(),
-                "updated_at": datetime.now(),
-                "processed_at": datetime.now(),
-                "page_count": result.get("page_count", 0),
-                "has_images": result.get("has_images", False)
-            }
+            # Create file record (for future database integration)
+            # {
+            #     "id": file_id,
+            #     "user_id": user_id,
+            #     "filename": file.filename,
+            #     "original_filename": file.filename,
+            #     "file_type": file_type,
+            #     "file_size": file_size,
+            #     "status": FileStatus.PROCESSED,
+            #     "s3_key": temp_file_path,  # For now, just store the local path
+            #     "created_at": datetime.now(),
+            #     "updated_at": datetime.now(),
+            #     "processed_at": datetime.now(),
+            #     "page_count": result.get("page_count", 0),
+            #     "has_images": result.get("has_images", False)
+            # }
 
             # TODO: Save file record to database
 

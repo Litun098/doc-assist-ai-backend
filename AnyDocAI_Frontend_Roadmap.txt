@@ -1,0 +1,864 @@
+# AnyDocAI Frontend Development Roadmap
+
+## Project Overview
+
+AnyDocAI is an AI document assistant that allows users to chat with various file types (PDF, Word, Excel, PowerPoint) using AI models. The frontend will be a single-page application with a ChatGPT-like 3-column layout.
+
+## Tech Stack
+
+- **Framework**: Next.js 14 (App Router)
+- **Styling**: Tailwind CSS
+- **State Management**: React Context API
+- **API Communication**: Axios
+- **File Handling**: react-dropzone
+- **Charts**: Chart.js with react-chartjs-2
+
+## Phase 1: Initial Setup and Core Components
+
+### Step 1: Project Initialization
+
+```bash
+# Create a new Next.js project
+npx create-next-app@latest anydocai-frontend
+cd anydocai-frontend
+
+# Install dependencies
+npm install axios react-dropzone chart.js react-chartjs-2 uuid
+```
+
+### Step 2: Environment Configuration
+
+Create a `.env.local` file:
+```
+NEXT_PUBLIC_API_URL=http://localhost:8000/api
+```
+
+### Step 3: Project Structure
+
+Set up the following directory structure:
+```
+anydocai-frontend/
+├── public/
+├── src/
+│   ├── app/
+│   │   ├── page.js (Main page with 3-column layout)
+│   │   ├── layout.js
+│   │   └── globals.css
+│   ├── components/
+│   │   ├── DocumentPanel.jsx (Left column)
+│   │   ├── ChatPanel.jsx (Middle column)
+│   │   ├── SessionPanel.jsx (Right column)
+│   │   ├── FileUpload.jsx
+│   │   ├── MessageList.jsx
+│   │   └── ChatInput.jsx
+│   ├── context/
+│   │   └── AppContext.js (State management)
+│   └── services/
+│       └── api.js (API communication)
+```
+
+## Phase 2: API Service Implementation
+
+### Step 1: Create API Service
+
+Create `src/services/api.js`:
+
+```javascript
+import axios from 'axios';
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+const TEST_USER_ID = 'test-user-123'; // For Phase 1 without auth
+
+const api = axios.create({
+  baseURL: API_URL,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Document APIs
+export const uploadDocument = async (file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('user_id', TEST_USER_ID);
+  
+  const response = await api.post('/documents/upload', formData, {
+    headers: {
+      'Content-Type': 'multipart/form-data',
+    },
+  });
+  return response.data;
+};
+
+export const listDocuments = async () => {
+  const response = await api.get(`/documents/list/${TEST_USER_ID}`);
+  return response.data;
+};
+
+export const deleteDocument = async (fileId) => {
+  const response = await api.delete(`/documents/${fileId}?user_id=${TEST_USER_ID}`);
+  return response.data;
+};
+
+// Chat APIs
+export const sendChatMessage = async (message, fileIds, useAgent = false, chatHistory = []) => {
+  const response = await api.post('/chat/message', {
+    message,
+    user_id: TEST_USER_ID,
+    file_ids: fileIds,
+    chat_history: chatHistory,
+    use_agent: useAgent
+  });
+  
+  return response.data;
+};
+```
+
+## Phase 3: State Management
+
+### Step 1: Create Context Provider
+
+Create `src/context/AppContext.js`:
+
+```javascript
+'use client';
+
+import { createContext, useContext, useState, useEffect } from 'react';
+import { v4 as uuidv4 } from 'uuid';
+
+const AppContext = createContext();
+
+export function AppProvider({ children }) {
+  // Documents state
+  const [documents, setDocuments] = useState([]);
+  const [selectedDocuments, setSelectedDocuments] = useState([]);
+  
+  // Chat sessions state
+  const [sessions, setSessions] = useState([]);
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+  
+  // Initialize with a default session
+  useEffect(() => {
+    if (sessions.length === 0) {
+      const defaultSession = {
+        id: uuidv4(),
+        name: 'New Chat',
+        messages: [],
+        created_at: new Date().toISOString()
+      };
+      setSessions([defaultSession]);
+      setCurrentSessionId(defaultSession.id);
+    }
+  }, [sessions]);
+  
+  // Get current session
+  const currentSession = sessions.find(s => s.id === currentSessionId) || { messages: [] };
+  
+  // Toggle document selection
+  const toggleDocumentSelection = (fileId) => {
+    setSelectedDocuments(prev => {
+      if (prev.includes(fileId)) {
+        return prev.filter(id => id !== fileId);
+      } else {
+        return [...prev, fileId];
+      }
+    });
+  };
+  
+  // Create new session
+  const createNewSession = () => {
+    const newSession = {
+      id: uuidv4(),
+      name: 'New Chat',
+      messages: [],
+      created_at: new Date().toISOString()
+    };
+    setSessions(prev => [...prev, newSession]);
+    setCurrentSessionId(newSession.id);
+  };
+  
+  // Switch session
+  const switchSession = (sessionId) => {
+    setCurrentSessionId(sessionId);
+  };
+  
+  // Add message to current session
+  const addMessageToCurrentSession = (message) => {
+    setSessions(prev => prev.map(session => {
+      if (session.id === currentSessionId) {
+        // Update session name based on first user message
+        let sessionName = session.name;
+        if (message.role === 'user' && session.messages.length === 0) {
+          sessionName = message.content.length > 30 
+            ? message.content.substring(0, 30) + '...' 
+            : message.content;
+        }
+        
+        return {
+          ...session,
+          name: sessionName,
+          messages: [...session.messages, message]
+        };
+      }
+      return session;
+    }));
+  };
+  
+  // Delete session
+  const deleteSession = (sessionId) => {
+    setSessions(prev => prev.filter(s => s.id !== sessionId));
+    if (currentSessionId === sessionId && sessions.length > 1) {
+      setCurrentSessionId(sessions[0].id);
+    } else if (sessions.length === 1) {
+      createNewSession();
+    }
+  };
+  
+  return (
+    <AppContext.Provider value={{
+      documents,
+      setDocuments,
+      selectedDocuments,
+      toggleDocumentSelection,
+      sessions,
+      currentSessionId,
+      currentSession,
+      createNewSession,
+      switchSession,
+      addMessageToCurrentSession,
+      deleteSession
+    }}>
+      {children}
+    </AppContext.Provider>
+  );
+}
+
+export function useAppContext() {
+  return useContext(AppContext);
+}
+```
+
+## Phase 4: Component Implementation
+
+### Step 1: Main Page Layout
+
+Update `src/app/page.js`:
+
+```jsx
+'use client';
+
+import { useEffect, useState } from 'react';
+import DocumentPanel from '@/components/DocumentPanel';
+import ChatPanel from '@/components/ChatPanel';
+import SessionPanel from '@/components/SessionPanel';
+import { AppProvider } from '@/context/AppContext';
+
+export default function Home() {
+  return (
+    <AppProvider>
+      <div className="flex h-screen bg-gray-50">
+        {/* Left Column - Document Management */}
+        <div className="w-64 bg-white border-r overflow-hidden flex flex-col">
+          <DocumentPanel />
+        </div>
+        
+        {/* Middle Column - Chat Interface */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <ChatPanel />
+        </div>
+        
+        {/* Right Column - Chat History */}
+        <div className="w-64 bg-white border-l overflow-hidden flex flex-col">
+          <SessionPanel />
+        </div>
+      </div>
+    </AppProvider>
+  );
+}
+```
+
+### Step 2: Document Panel Component
+
+Create `src/components/DocumentPanel.jsx`:
+
+```jsx
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useDropzone } from 'react-dropzone';
+import { listDocuments, uploadDocument, deleteDocument } from '@/services/api';
+import { useAppContext } from '@/context/AppContext';
+
+export default function DocumentPanel() {
+  const { selectedDocuments, toggleDocumentSelection, setDocuments, documents } = useAppContext();
+  const [isUploading, setIsUploading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  
+  const fetchDocuments = async () => {
+    setIsLoading(true);
+    try {
+      const data = await listDocuments();
+      setDocuments(data.documents || []);
+    } catch (error) {
+      console.error('Error fetching documents:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  useEffect(() => {
+    fetchDocuments();
+  }, []);
+  
+  const { getRootProps, getInputProps } = useDropzone({
+    accept: {
+      'application/pdf': ['.pdf'],
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
+      'text/plain': ['.txt']
+    },
+    maxSize: 50 * 1024 * 1024, // 50MB
+    onDrop: async (acceptedFiles) => {
+      if (acceptedFiles.length > 0) {
+        setIsUploading(true);
+        try {
+          const file = acceptedFiles[0];
+          await uploadDocument(file);
+          fetchDocuments();
+        } catch (error) {
+          console.error('Upload failed:', error);
+          alert('Upload failed: ' + (error.response?.data?.detail || error.message));
+        } finally {
+          setIsUploading(false);
+        }
+      }
+    }
+  });
+  
+  const handleDeleteDocument = async (fileId, e) => {
+    e.stopPropagation();
+    if (confirm('Are you sure you want to delete this document?')) {
+      try {
+        await deleteDocument(fileId);
+        fetchDocuments();
+      } catch (error) {
+        console.error('Error deleting document:', error);
+      }
+    }
+  };
+  
+  return (
+    <>
+      <div className="p-4 border-b">
+        <h2 className="text-lg font-medium">Documents</h2>
+      </div>
+      
+      <div className="p-4 border-b">
+        <div 
+          {...getRootProps()} 
+          className="border-2 border-dashed rounded-lg p-4 text-center cursor-pointer hover:border-blue-500 transition-colors"
+        >
+          <input {...getInputProps()} />
+          {isUploading ? (
+            <p className="text-sm text-gray-600">Uploading...</p>
+          ) : (
+            <p className="text-sm text-gray-600">
+              Drop file here or click to upload
+            </p>
+          )}
+        </div>
+      </div>
+      
+      <div className="flex-1 overflow-y-auto p-4">
+        {isLoading ? (
+          <p className="text-sm text-gray-500">Loading documents...</p>
+        ) : documents.length === 0 ? (
+          <p className="text-sm text-gray-500">No documents uploaded yet</p>
+        ) : (
+          <ul className="space-y-2">
+            {documents.map((doc) => (
+              <li 
+                key={doc.file_id}
+                onClick={() => toggleDocumentSelection(doc.file_id)}
+                className={`p-3 rounded-md cursor-pointer flex justify-between items-center ${
+                  selectedDocuments.includes(doc.file_id) 
+                    ? 'bg-blue-100 border border-blue-300' 
+                    : 'bg-gray-50 hover:bg-gray-100'
+                }`}
+              >
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    checked={selectedDocuments.includes(doc.file_id)}
+                    onChange={() => {}}
+                    className="mr-2"
+                  />
+                  <div>
+                    <p className="font-medium text-sm truncate max-w-[150px]">{doc.file_name}</p>
+                    <p className="text-xs text-gray-500">{doc.file_type.toUpperCase()}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={(e) => handleDeleteDocument(doc.file_id, e)}
+                  className="text-red-500 hover:text-red-700 text-xs"
+                >
+                  Delete
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </>
+  );
+}
+```
+
+### Step 3: Chat Panel Component
+
+Create `src/components/ChatPanel.jsx`:
+
+```jsx
+'use client';
+
+import { useState, useRef, useEffect } from 'react';
+import { sendChatMessage } from '@/services/api';
+import { useAppContext } from '@/context/AppContext';
+import { Bar, Line, Pie } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  LineElement,
+  PointElement,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend,
+} from 'chart.js';
+
+// Register ChartJS components
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  LineElement,
+  PointElement,
+  ArcElement,
+  Title,
+  Tooltip,
+  Legend
+);
+
+export default function ChatPanel() {
+  const { selectedDocuments, currentSession, addMessageToCurrentSession } = useAppContext();
+  const [input, setInput] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [useAgent, setUseAgent] = useState(false);
+  const messagesEndRef = useRef(null);
+  
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+  
+  useEffect(() => {
+    scrollToBottom();
+  }, [currentSession.messages]);
+  
+  const handleSendMessage = async (e) => {
+    e.preventDefault();
+    
+    if (!input.trim() || selectedDocuments.length === 0) return;
+    
+    // Add user message to chat
+    const userMessage = {
+      role: 'user',
+      content: input,
+      timestamp: new Date().toISOString()
+    };
+    
+    addMessageToCurrentSession(userMessage);
+    setInput('');
+    setIsLoading(true);
+    
+    try {
+      // Format chat history for API
+      const chatHistory = currentSession.messages.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }));
+      
+      // Send message to API
+      const response = await sendChatMessage(
+        input,
+        selectedDocuments,
+        useAgent,
+        chatHistory
+      );
+      
+      // Add AI response to chat
+      const aiMessage = {
+        role: 'assistant',
+        content: response.response,
+        timestamp: response.timestamp || new Date().toISOString(),
+        sources: response.sources || [],
+        chartData: response.chart_data
+      };
+      
+      addMessageToCurrentSession(aiMessage);
+    } catch (error) {
+      console.error('Error sending message:', error);
+      
+      // Add error message
+      const errorMessage = {
+        role: 'assistant',
+        content: 'Sorry, there was an error processing your request.',
+        timestamp: new Date().toISOString(),
+        isError: true
+      };
+      
+      addMessageToCurrentSession(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+  
+  const renderChart = (chartData) => {
+    if (!chartData) return null;
+    
+    const ChartComponent = {
+      'bar': Bar,
+      'line': Line,
+      'pie': Pie
+    }[chartData.type] || Bar;
+    
+    return (
+      <div className="mt-2 p-4 bg-white rounded-lg border border-gray-200">
+        <h3 className="text-sm font-medium mb-2">{chartData.title}</h3>
+        <div className="h-64">
+          <ChartComponent
+            data={chartData.data}
+            options={{
+              responsive: true,
+              maintainAspectRatio: false,
+              ...chartData.options
+            }}
+          />
+        </div>
+      </div>
+    );
+  };
+  
+  return (
+    <>
+      <div className="flex items-center justify-between p-4 border-b">
+        <h2 className="text-lg font-medium">Chat with Documents</h2>
+        <div className="flex items-center">
+          <span className="text-sm mr-2">RAG</span>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              className="sr-only peer"
+              checked={useAgent}
+              onChange={() => setUseAgent(!useAgent)}
+            />
+            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+          </label>
+          <span className="text-sm ml-2">Agent</span>
+        </div>
+      </div>
+      
+      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        {currentSession.messages.length === 0 ? (
+          <div className="text-center text-gray-500 mt-10">
+            <p>Select documents and start chatting</p>
+          </div>
+        ) : (
+          currentSession.messages.map((msg, index) => (
+            <div
+              key={index}
+              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`max-w-[80%] rounded-lg p-3 ${
+                  msg.role === 'user'
+                    ? 'bg-blue-500 text-white'
+                    : msg.isError
+                    ? 'bg-red-100 text-red-800'
+                    : 'bg-gray-100 text-gray-800'
+                }`}
+              >
+                <p>{msg.content}</p>
+                
+                {msg.chartData && renderChart(msg.chartData)}
+                
+                {msg.sources && msg.sources.length > 0 && (
+                  <div className="mt-2 text-xs border-t pt-2">
+                    <p className={`font-medium ${msg.role === 'user' ? 'text-blue-200' : 'text-gray-500'}`}>
+                      Sources:
+                    </p>
+                    <ul className={`list-disc pl-4 ${msg.role === 'user' ? 'text-blue-200' : 'text-gray-500'}`}>
+                      {msg.sources.slice(0, 2).map((source, i) => (
+                        <li key={i} className="truncate">
+                          {source.metadata.file_name}
+                        </li>
+                      ))}
+                      {msg.sources.length > 2 && (
+                        <li>+{msg.sources.length - 2} more sources</li>
+                      )}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))
+        )}
+        
+        {isLoading && (
+          <div className="flex justify-start">
+            <div className="bg-gray-100 rounded-lg p-3 max-w-[80%]">
+              <div className="flex space-x-2">
+                <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"></div>
+                <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        <div ref={messagesEndRef} />
+      </div>
+      
+      <div className="p-4 border-t">
+        <form onSubmit={handleSendMessage} className="flex space-x-2">
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            disabled={isLoading || selectedDocuments.length === 0}
+            placeholder={selectedDocuments.length === 0 ? "Select documents first" : "Type your message..."}
+            className="flex-1 p-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <button
+            type="submit"
+            disabled={isLoading || !input.trim() || selectedDocuments.length === 0}
+            className="bg-blue-500 text-white px-4 py-2 rounded-md hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed"
+          >
+            Send
+          </button>
+        </form>
+      </div>
+    </>
+  );
+}
+```
+
+### Step 4: Session Panel Component
+
+Create `src/components/SessionPanel.jsx`:
+
+```jsx
+'use client';
+
+import { useAppContext } from '@/context/AppContext';
+
+export default function SessionPanel() {
+  const { 
+    sessions, 
+    currentSessionId, 
+    createNewSession, 
+    switchSession,
+    deleteSession
+  } = useAppContext();
+  
+  return (
+    <>
+      <div className="p-4 border-b flex justify-between items-center">
+        <h2 className="text-lg font-medium">Chat History</h2>
+        <button
+          onClick={createNewSession}
+          className="text-sm bg-blue-500 text-white px-2 py-1 rounded hover:bg-blue-600"
+        >
+          New Chat
+        </button>
+      </div>
+      
+      <div className="flex-1 overflow-y-auto p-4">
+        {sessions.length === 0 ? (
+          <p className="text-sm text-gray-500">No chat sessions yet</p>
+        ) : (
+          <ul className="space-y-2">
+            {sessions.map((session) => (
+              <li 
+                key={session.id}
+                onClick={() => switchSession(session.id)}
+                className={`p-3 rounded-md cursor-pointer flex justify-between items-center ${
+                  currentSessionId === session.id 
+                    ? 'bg-blue-100 border border-blue-300' 
+                    : 'bg-gray-50 hover:bg-gray-100'
+                }`}
+              >
+                <div className="flex-1 truncate">
+                  <p className="font-medium text-sm truncate">{session.name}</p>
+                  <p className="text-xs text-gray-500">
+                    {new Date(session.created_at).toLocaleString()}
+                  </p>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteSession(session.id);
+                  }}
+                  className="text-red-500 hover:text-red-700 text-xs ml-2"
+                >
+                  Delete
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </>
+  );
+}
+```
+
+### Step 5: Update Layout
+
+Update `src/app/layout.js`:
+
+```jsx
+import './globals.css'
+
+export const metadata = {
+  title: 'AnyDocAI - Chat with your documents',
+  description: 'AI-powered document assistant that lets you chat with all your files',
+}
+
+export default function RootLayout({ children }) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  )
+}
+```
+
+## Phase 5: Testing and Debugging
+
+### Step 1: Start the Development Server
+
+```bash
+npm run dev
+```
+
+### Step 2: Test Document Upload
+
+1. Upload a document (PDF, Word, Excel, etc.)
+2. Verify it appears in the document list
+3. Test document selection and deletion
+
+### Step 3: Test Chat Functionality
+
+1. Select a document
+2. Send a message
+3. Verify the response
+4. Test the RAG/Agent toggle
+5. Check if sources are displayed correctly
+
+### Step 4: Test Session Management
+
+1. Create a new session
+2. Switch between sessions
+3. Delete a session
+
+## API Reference
+
+### Document APIs
+
+1. **Upload Document**
+   - Endpoint: `POST /api/documents/upload`
+   - Parameters: `file` (multipart/form-data), `user_id`
+   - Response: Document details with processing status
+
+2. **List Documents**
+   - Endpoint: `GET /api/documents/list/{user_id}`
+   - Response: List of user's documents
+
+3. **Delete Document**
+   - Endpoint: `DELETE /api/documents/{file_id}?user_id={user_id}`
+   - Response: Deletion confirmation
+
+### Chat APIs
+
+1. **Send Chat Message**
+   - Endpoint: `POST /api/chat/message`
+   - Body: `{ message, user_id, file_ids, use_agent, chat_history }`
+   - Response: AI response with sources and optional chart data
+
+## Phase 2 API Reference (For Future Implementation)
+
+### Authentication APIs
+
+1. **Register User**
+   - Endpoint: `POST /api/auth/register`
+   - Body: `{ email, password, full_name }`
+   - Response: User details and access token
+
+2. **Login User**
+   - Endpoint: `POST /api/auth/login`
+   - Body: `{ email, password }`
+   - Response: User details and access token
+
+3. **Get Current User**
+   - Endpoint: `GET /api/auth/me`
+   - Headers: `Authorization: Bearer {token}`
+   - Response: User details
+
+### Session APIs
+
+1. **Create Session**
+   - Endpoint: `POST /api/chat/sessions`
+   - Body: `{ name, document_ids }`
+   - Response: Session details
+
+2. **List Sessions**
+   - Endpoint: `GET /api/chat/sessions`
+   - Response: List of user's sessions
+
+3. **Delete Session**
+   - Endpoint: `DELETE /api/chat/sessions/{session_id}`
+   - Response: Deletion confirmation
+
+4. **Get Session Messages**
+   - Endpoint: `GET /api/chat/sessions/{session_id}/messages`
+   - Response: List of messages in the session
+
+5. **Send Message in Session**
+   - Endpoint: `POST /api/chat/sessions/{session_id}/messages`
+   - Body: `{ message, use_agent }`
+   - Response: AI response with sources and optional chart data
+
+## Troubleshooting
+
+1. **API Connection Issues**
+   - Verify backend is running on port 8000
+   - Check CORS configuration in backend
+   - Verify API URL in .env.local
+
+2. **Document Upload Problems**
+   - Check file size (max 50MB)
+   - Verify supported file types
+   - Check browser console for errors
+
+3. **Chat Not Working**
+   - Ensure documents are selected
+   - Check backend logs for errors
+   - Verify API response format
+
+4. **Chart Rendering Issues**
+   - Ensure Chart.js is properly initialized
+   - Check chart data format from API
+   - Verify browser compatibility
