@@ -12,8 +12,9 @@ import base64
 from io import BytesIO
 
 # LangChain imports
-from langchain.agents import initialize_agent, Tool
-from langchain.agents import AgentType
+from langchain.agents import Tool
+from langchain.agents import create_openai_functions_agent
+from langchain.agents import AgentExecutor
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 from langchain_openai import ChatOpenAI
@@ -316,11 +317,32 @@ class AgentService:
             temperature=0.7
         )
 
-        # Initialize agent
-        self.agent = initialize_agent(
-            self.tools,
-            self.llm,
-            agent=AgentType.OPENAI_FUNCTIONS,
+        # Initialize agent using the new method
+        from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+        # Create a prompt template
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are AnyDocAI, an AI document assistant that helps users understand their documents.
+            You have access to several tools to help you answer questions about documents.
+            Use the tools to provide accurate and helpful responses.
+            If you don't know the answer, say you don't know. Don't try to make up an answer.
+            Always be helpful, concise, and professional."""),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
+        ])
+
+        # Create the agent with the prompt
+        agent = create_openai_functions_agent(
+            llm=self.llm,
+            tools=self.tools,
+            prompt=prompt
+        )
+
+        # Create agent executor
+        self.agent_executor = AgentExecutor.from_agent_and_tools(
+            agent=agent,
+            tools=self.tools,
             verbose=True
         )
 
@@ -344,8 +366,12 @@ class AgentService:
                 "file_ids": file_ids or []
             }
 
-            # Run the agent
-            response = self.agent.run(input_dict)
+            # Add empty chat history if not provided
+            input_dict["chat_history"] = input_dict.get("chat_history", [])
+
+            # Run the agent executor
+            result = self.agent_executor.invoke(input_dict)
+            response = result.get("output", "")
 
             # Format the response
             result = {

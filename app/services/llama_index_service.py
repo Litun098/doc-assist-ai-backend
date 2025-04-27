@@ -68,9 +68,11 @@ class LlamaIndexService:
         if settings.WEAVIATE_URL and settings.WEAVIATE_API_KEY:
             try:
                 # Connect to Weaviate cloud using the updated client API
+                # Skip initialization checks to avoid gRPC issues
                 self.weaviate_client = weaviate.connect_to_weaviate_cloud(
                     cluster_url=settings.WEAVIATE_URL,
                     auth_credentials=Auth.api_key(settings.WEAVIATE_API_KEY),
+                    skip_init_checks=True  # Skip initialization checks
                 )
 
                 # Create vector store with the updated API
