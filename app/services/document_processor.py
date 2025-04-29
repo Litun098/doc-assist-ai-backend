@@ -107,7 +107,7 @@ class DocumentProcessor:
         elif ext == 'txt':
             return FileType.TXT
         else:
-            return FileType.OTHER
+            return FileType.UNKNOWN
 
     def get_chunking_strategy(self, file_type: FileType) -> ChunkingStrategy:
         """
@@ -249,7 +249,10 @@ class DocumentProcessor:
             if self.use_weaviate and self.weaviate_client:
                 # Index documents in Weaviate
                 try:
-                    index_name = f"{settings.LLAMAINDEX_INDEX_NAME}_{user_id}"
+                    # Weaviate doesn't allow underscores in class names, so we'll replace them with hyphens
+                    # Also, we'll use a shorter version of the user_id to avoid exceeding length limits
+                    short_user_id = user_id.replace("-", "")[:8]
+                    index_name = f"{settings.LLAMAINDEX_INDEX_NAME}{short_user_id}"
                     vector_store = WeaviateVectorStore(
                         weaviate_client=self.weaviate_client,
                         index_name=index_name,

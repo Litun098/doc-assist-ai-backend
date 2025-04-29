@@ -102,9 +102,27 @@ class DocumentService:
 
             if self.supabase:
                 try:
-                    logger.info(f"Inserting document data into Supabase for user ID: {user_id}")
-                    self.supabase.table("documents").insert(document_data).execute()
-                    logger.info(f"Document data inserted successfully for file ID: {file_id}")
+                    # Try using service role key first to avoid RLS issues
+                    if settings.SUPABASE_SERVICE_KEY:
+                        try:
+                            logger.info(f"Inserting document data using service role for user ID: {user_id}")
+                            service_supabase = create_client(
+                                supabase_url=settings.SUPABASE_URL,
+                                supabase_key=settings.SUPABASE_SERVICE_KEY
+                            )
+                            service_supabase.table("documents").insert(document_data).execute()
+                            logger.info(f"Document data inserted successfully using service role for file ID: {file_id}")
+                        except Exception as service_error:
+                            logger.error(f"Error inserting document data using service role: {str(service_error)}")
+                            # Fall back to regular key
+                            logger.info(f"Falling back to regular key for inserting document data for user ID: {user_id}")
+                            self.supabase.table("documents").insert(document_data).execute()
+                            logger.info(f"Document data inserted successfully for file ID: {file_id}")
+                    else:
+                        # No service key available, use regular key
+                        logger.info(f"Inserting document data into Supabase for user ID: {user_id}")
+                        self.supabase.table("documents").insert(document_data).execute()
+                        logger.info(f"Document data inserted successfully for file ID: {file_id}")
                 except Exception as insert_error:
                     logger.error(f"Error inserting document data: {str(insert_error)}")
                     # Continue with document processing despite the error
@@ -324,33 +342,14 @@ class DocumentService:
             # Update document status in Supabase
             if self.supabase and result["status"] == "success":
                 try:
-                    logger.info(f"Updating document status to processed for file ID: {file_id}")
-                    self.supabase.table("documents").update({
-                        "status": "processed",
-                        "processed_at": datetime.now().isoformat(),
-                        "updated_at": datetime.now().isoformat(),
-                        "metadata": {
-                            "num_chunks": result.get("num_chunks", 0),
-                            "chunking_strategy": result.get("chunking_strategy", "unknown")
-                        }
-                    }).eq("id", file_id).execute()
-                    logger.info(f"Document status updated successfully for file ID: {file_id}")
-                except Exception as update_error:
-                    logger.error(f"Error updating document status: {str(update_error)}")
-
-                    # Check if it's an RLS policy error
-                    error_str = str(update_error)
-                    if "row-level security policy" in error_str and "documents" in error_str:
-                        logger.warning("RLS policy error detected for documents table during status update")
-
+                    # Try using service role key first to avoid RLS issues
+                    if settings.SUPABASE_SERVICE_KEY:
                         try:
-                            # Use service role to update document data (bypasses RLS)
+                            logger.info(f"Updating document status to processed using service role for file ID: {file_id}")
                             service_supabase = create_client(
                                 supabase_url=settings.SUPABASE_URL,
                                 supabase_key=settings.SUPABASE_SERVICE_KEY
                             )
-
-                            logger.info(f"Attempting to update document status using service role for file ID: {file_id}")
                             service_supabase.table("documents").update({
                                 "status": "processed",
                                 "processed_at": datetime.now().isoformat(),
@@ -363,34 +362,45 @@ class DocumentService:
                             logger.info(f"Document status updated successfully using service role for file ID: {file_id}")
                         except Exception as service_error:
                             logger.error(f"Error updating document status using service role: {str(service_error)}")
-
+                            # Fall back to regular key
+                            logger.info(f"Falling back to regular key for updating document status for file ID: {file_id}")
+                            self.supabase.table("documents").update({
+                                "status": "processed",
+                                "processed_at": datetime.now().isoformat(),
+                                "updated_at": datetime.now().isoformat(),
+                                "metadata": {
+                                    "num_chunks": result.get("num_chunks", 0),
+                                    "chunking_strategy": result.get("chunking_strategy", "unknown")
+                                }
+                            }).eq("id", file_id).execute()
+                            logger.info(f"Document status updated successfully for file ID: {file_id}")
+                    else:
+                        # No service key available, use regular key
+                        logger.info(f"Updating document status to processed for file ID: {file_id}")
+                        self.supabase.table("documents").update({
+                            "status": "processed",
+                            "processed_at": datetime.now().isoformat(),
+                            "updated_at": datetime.now().isoformat(),
+                            "metadata": {
+                                "num_chunks": result.get("num_chunks", 0),
+                                "chunking_strategy": result.get("chunking_strategy", "unknown")
+                            }
+                        }).eq("id", file_id).execute()
+                        logger.info(f"Document status updated successfully for file ID: {file_id}")
+                except Exception as update_error:
+                    logger.error(f"Error updating document status: {str(update_error)}")
                     # Continue despite the error
                     logger.info(f"Document was processed successfully despite database update error for file ID: {file_id}")
             elif self.supabase and result["status"] == "error":
                 try:
-                    logger.info(f"Updating document status to error for file ID: {file_id}")
-                    self.supabase.table("documents").update({
-                        "status": "error",
-                        "error_message": result.get("error", "Unknown error"),
-                        "updated_at": datetime.now().isoformat()
-                    }).eq("id", file_id).execute()
-                    logger.info(f"Document error status updated successfully for file ID: {file_id}")
-                except Exception as update_error:
-                    logger.error(f"Error updating document error status: {str(update_error)}")
-
-                    # Check if it's an RLS policy error
-                    error_str = str(update_error)
-                    if "row-level security policy" in error_str and "documents" in error_str:
-                        logger.warning("RLS policy error detected for documents table during error status update")
-
+                    # Try using service role key first to avoid RLS issues
+                    if settings.SUPABASE_SERVICE_KEY:
                         try:
-                            # Use service role to update document data (bypasses RLS)
+                            logger.info(f"Updating document status to error using service role for file ID: {file_id}")
                             service_supabase = create_client(
                                 supabase_url=settings.SUPABASE_URL,
                                 supabase_key=settings.SUPABASE_SERVICE_KEY
                             )
-
-                            logger.info(f"Attempting to update document error status using service role for file ID: {file_id}")
                             service_supabase.table("documents").update({
                                 "status": "error",
                                 "error_message": result.get("error", "Unknown error"),
@@ -399,7 +409,25 @@ class DocumentService:
                             logger.info(f"Document error status updated successfully using service role for file ID: {file_id}")
                         except Exception as service_error:
                             logger.error(f"Error updating document error status using service role: {str(service_error)}")
-
+                            # Fall back to regular key
+                            logger.info(f"Falling back to regular key for updating document error status for file ID: {file_id}")
+                            self.supabase.table("documents").update({
+                                "status": "error",
+                                "error_message": result.get("error", "Unknown error"),
+                                "updated_at": datetime.now().isoformat()
+                            }).eq("id", file_id).execute()
+                            logger.info(f"Document error status updated successfully for file ID: {file_id}")
+                    else:
+                        # No service key available, use regular key
+                        logger.info(f"Updating document status to error for file ID: {file_id}")
+                        self.supabase.table("documents").update({
+                            "status": "error",
+                            "error_message": result.get("error", "Unknown error"),
+                            "updated_at": datetime.now().isoformat()
+                        }).eq("id", file_id).execute()
+                        logger.info(f"Document error status updated successfully for file ID: {file_id}")
+                except Exception as update_error:
+                    logger.error(f"Error updating document error status: {str(update_error)}")
                     # Continue despite the error
 
         except Exception as e:
@@ -407,29 +435,14 @@ class DocumentService:
             # Update document status in Supabase
             if self.supabase:
                 try:
-                    logger.info(f"Updating document status to error after exception for file ID: {file_id}")
-                    self.supabase.table("documents").update({
-                        "status": "error",
-                        "error_message": str(e),
-                        "updated_at": datetime.now().isoformat()
-                    }).eq("id", file_id).execute()
-                    logger.info(f"Document error status updated successfully after exception for file ID: {file_id}")
-                except Exception as update_error:
-                    logger.error(f"Error updating document error status after exception: {str(update_error)}")
-
-                    # Check if it's an RLS policy error
-                    error_str = str(update_error)
-                    if "row-level security policy" in error_str and "documents" in error_str:
-                        logger.warning("RLS policy error detected for documents table during exception handling")
-
+                    # Try using service role key first to avoid RLS issues
+                    if settings.SUPABASE_SERVICE_KEY:
                         try:
-                            # Use service role to update document data (bypasses RLS)
+                            logger.info(f"Updating document status to error using service role after exception for file ID: {file_id}")
                             service_supabase = create_client(
                                 supabase_url=settings.SUPABASE_URL,
                                 supabase_key=settings.SUPABASE_SERVICE_KEY
                             )
-
-                            logger.info(f"Attempting to update document error status using service role after exception for file ID: {file_id}")
                             service_supabase.table("documents").update({
                                 "status": "error",
                                 "error_message": str(e),
@@ -438,7 +451,25 @@ class DocumentService:
                             logger.info(f"Document error status updated successfully using service role after exception for file ID: {file_id}")
                         except Exception as service_error:
                             logger.error(f"Error updating document error status using service role after exception: {str(service_error)}")
-
+                            # Fall back to regular key
+                            logger.info(f"Falling back to regular key for updating document error status after exception for file ID: {file_id}")
+                            self.supabase.table("documents").update({
+                                "status": "error",
+                                "error_message": str(e),
+                                "updated_at": datetime.now().isoformat()
+                            }).eq("id", file_id).execute()
+                            logger.info(f"Document error status updated successfully after exception for file ID: {file_id}")
+                    else:
+                        # No service key available, use regular key
+                        logger.info(f"Updating document status to error after exception for file ID: {file_id}")
+                        self.supabase.table("documents").update({
+                            "status": "error",
+                            "error_message": str(e),
+                            "updated_at": datetime.now().isoformat()
+                        }).eq("id", file_id).execute()
+                        logger.info(f"Document error status updated successfully after exception for file ID: {file_id}")
+                except Exception as update_error:
+                    logger.error(f"Error updating document error status after exception: {str(update_error)}")
                     # Continue despite the error
 
 # Create a singleton instance
