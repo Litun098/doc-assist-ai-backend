@@ -45,9 +45,30 @@ class DocumentProcessor:
         self.weaviate_client = None
         self.use_weaviate = False
 
-        # Disable Weaviate for now to get the server running
-        self.use_weaviate = False
-        logger.info("Using in-memory storage (Weaviate disabled)")
+        # Initialize Weaviate if configured
+        if settings.WEAVIATE_URL and settings.WEAVIATE_API_KEY:
+            try:
+                from weaviate.classes.init import Auth, AdditionalConfig, Timeout
+
+                # Make sure we're using the REST endpoint, not gRPC
+                weaviate_url = settings.WEAVIATE_URL
+                if not weaviate_url.startswith("https://"):
+                    weaviate_url = f"https://{weaviate_url}"
+
+                logger.info(f"Connecting to Weaviate at {weaviate_url}")
+                self.weaviate_client = weaviate.connect_to_weaviate_cloud(
+                    cluster_url=weaviate_url,
+                    auth_credentials=Auth.api_key(settings.WEAVIATE_API_KEY),
+                    skip_init_checks=True,  # Skip initialization checks
+                    additional_config=AdditionalConfig(
+                        timeout=Timeout(init=60)  # Increase timeout to 60 seconds
+                    )
+                )
+                self.use_weaviate = True
+                logger.info("Using Weaviate for vector storage")
+            except Exception as e:
+                logger.error(f"Error connecting to Weaviate: {str(e)}")
+                logger.info("Falling back to in-memory storage")
 
         # Initialize node parsers for different chunking strategies
         self.fixed_size_parser = SentenceSplitter(

@@ -24,10 +24,10 @@ class UserLogin(BaseModel):
 async def register(user_data: UserCreate):
     """
     Register a new user.
-    
+
     Args:
         user_data: User registration data
-        
+
     Returns:
         User information and access token
     """
@@ -41,10 +41,10 @@ async def register(user_data: UserCreate):
 async def login(user_data: UserLogin):
     """
     Login a user.
-    
+
     Args:
         user_data: User login data
-        
+
     Returns:
         User information and access token
     """
@@ -57,11 +57,49 @@ async def login(user_data: UserLogin):
 async def get_current_user(current_user = Depends(auth_service.get_current_user)):
     """
     Get current user information.
-    
+
     Args:
         current_user: Current authenticated user (from dependency)
-        
+
     Returns:
         User information
     """
     return current_user
+
+@router.get("/status")
+async def auth_status():
+    """
+    Get authentication status information.
+
+    This is a public endpoint that doesn't require authentication.
+    It provides information about the authentication service status.
+
+    Returns:
+        Authentication service status
+    """
+    return {
+        "status": "ok",
+        "auth_service": "supabase",
+        "email_verification_required": True,
+        "message": "Authentication service is available"
+    }
+
+@router.get("/debug-token")
+async def debug_token(current_user = Depends(auth_service.get_current_user)):
+    """
+    Debug endpoint to check token validity.
+
+    This endpoint requires authentication and returns the current user
+    along with a success message if the token is valid.
+
+    Args:
+        current_user: Current authenticated user (from dependency)
+
+    Returns:
+        Debug information about the token
+    """
+    return {
+        "status": "ok",
+        "message": "Token is valid",
+        "user": current_user
+    }

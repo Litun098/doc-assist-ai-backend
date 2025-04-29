@@ -25,7 +25,7 @@ from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.llms.openai import OpenAI
 from llama_index.vector_stores.weaviate import WeaviateVectorStore
 import weaviate
-from weaviate.classes.init import Auth
+from weaviate.classes.init import Auth, AdditionalConfig, Timeout
 
 # FastAPI imports
 from fastapi import UploadFile, HTTPException
@@ -69,10 +69,19 @@ class LlamaIndexService:
             try:
                 # Connect to Weaviate cloud using the updated client API
                 # Skip initialization checks to avoid gRPC issues
+                # Make sure we're using the REST endpoint, not gRPC
+                weaviate_url = settings.WEAVIATE_URL
+                if not weaviate_url.startswith("https://"):
+                    weaviate_url = f"https://{weaviate_url}"
+
+                logger.info(f"Connecting to Weaviate at {weaviate_url}")
                 self.weaviate_client = weaviate.connect_to_weaviate_cloud(
-                    cluster_url=settings.WEAVIATE_URL,
+                    cluster_url=weaviate_url,
                     auth_credentials=Auth.api_key(settings.WEAVIATE_API_KEY),
-                    skip_init_checks=True  # Skip initialization checks
+                    skip_init_checks=True,  # Skip initialization checks
+                    additional_config=AdditionalConfig(
+                        timeout=Timeout(init=60)  # Increase timeout to 60 seconds
+                    )
                 )
 
                 # Create vector store with the updated API
