@@ -207,16 +207,38 @@ class DocumentService:
 
             # Get documents from Supabase if available
             if self.supabase:
-                response = self.supabase.table("documents").select("*").eq("user_id", user_id).execute()
+                try:
+                    # Try using service role key first to avoid RLS issues
+                    if settings.SUPABASE_SERVICE_KEY:
+                        try:
+                            logger.info(f"Listing documents using service role for user ID: {user_id}")
+                            service_supabase = create_client(
+                                supabase_url=settings.SUPABASE_URL,
+                                supabase_key=settings.SUPABASE_SERVICE_KEY
+                            )
+                            response = service_supabase.table("documents").select("*").eq("user_id", user_id).execute()
+                            logger.info(f"Documents listed successfully using service role for user ID: {user_id}")
+                        except Exception as service_error:
+                            logger.error(f"Error listing documents using service role: {str(service_error)}")
+                            # Fall back to regular key
+                            logger.info(f"Falling back to regular key for listing documents for user ID: {user_id}")
+                            response = self.supabase.table("documents").select("*").eq("user_id", user_id).execute()
+                            logger.info(f"Documents listed successfully for user ID: {user_id}")
+                    else:
+                        # No service key available, use regular key
+                        response = self.supabase.table("documents").select("*").eq("user_id", user_id).execute()
 
-                for doc in response.data:
-                    documents.append({
-                        "file_id": doc["id"],
-                        "file_name": doc["file_name"],
-                        "file_type": doc["file_type"],
-                        "status": doc["status"],
-                        "created_at": doc["created_at"]
-                    })
+                    for doc in response.data:
+                        documents.append({
+                            "file_id": doc["id"],
+                            "file_name": doc["file_name"],
+                            "file_type": doc["file_type"],
+                            "status": doc["status"],
+                            "created_at": doc["created_at"]
+                        })
+                except Exception as list_error:
+                    logger.error(f"Error listing documents: {str(list_error)}")
+                    # Continue with empty documents list
             else:
                 # Fallback to local storage
                 if os.path.exists(settings.UPLOAD_DIR):

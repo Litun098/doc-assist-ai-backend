@@ -63,14 +63,48 @@ class ChatService:
                     "last_message_at": datetime.now().isoformat()
                 }
 
-                self.supabase.table("chat_sessions").insert(session_data).execute()
+                # Try using service role key first to avoid RLS issues
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        logger.info(f"Creating chat session using service role for user ID: {user_id}")
+                        service_supabase = create_client(
+                            supabase_url=settings.SUPABASE_URL,
+                            supabase_key=settings.SUPABASE_SERVICE_KEY
+                        )
+                        service_supabase.table("chat_sessions").insert(session_data).execute()
+                        logger.info(f"Chat session created successfully using service role for user ID: {user_id}")
 
-                # Associate documents with session
-                for doc_id in document_ids:
-                    self.supabase.table("session_documents").insert({
-                        "session_id": session_id,
-                        "document_id": doc_id
-                    }).execute()
+                        # Associate documents with session using service role
+                        for doc_id in document_ids:
+                            service_supabase.table("session_documents").insert({
+                                "session_id": session_id,
+                                "document_id": doc_id
+                            }).execute()
+                        logger.info(f"Documents associated with session successfully using service role")
+                    except Exception as service_error:
+                        logger.error(f"Error creating chat session using service role: {str(service_error)}")
+                        # Fall back to regular key
+                        logger.info(f"Falling back to regular key for creating chat session for user ID: {user_id}")
+                        self.supabase.table("chat_sessions").insert(session_data).execute()
+                        logger.info(f"Chat session created successfully for user ID: {user_id}")
+
+                        # Associate documents with session
+                        for doc_id in document_ids:
+                            self.supabase.table("session_documents").insert({
+                                "session_id": session_id,
+                                "document_id": doc_id
+                            }).execute()
+                        logger.info(f"Documents associated with session successfully")
+                else:
+                    # No service key available, use regular key
+                    self.supabase.table("chat_sessions").insert(session_data).execute()
+
+                    # Associate documents with session
+                    for doc_id in document_ids:
+                        self.supabase.table("session_documents").insert({
+                            "session_id": session_id,
+                            "document_id": doc_id
+                        }).execute()
 
             return {
                 "session_id": session_id,
@@ -101,20 +135,68 @@ class ChatService:
 
             # Get sessions from Supabase if available
             if self.supabase:
-                response = self.supabase.table("chat_sessions").select("*").eq("user_id", user_id).order("last_message_at", desc=True).execute()
+                try:
+                    # Try using service role key first to avoid RLS issues
+                    if settings.SUPABASE_SERVICE_KEY:
+                        try:
+                            logger.info(f"Listing chat sessions using service role for user ID: {user_id}")
+                            service_supabase = create_client(
+                                supabase_url=settings.SUPABASE_URL,
+                                supabase_key=settings.SUPABASE_SERVICE_KEY
+                            )
+                            response = service_supabase.table("chat_sessions").select("*").eq("user_id", user_id).order("last_message_at", desc=True).execute()
+                            logger.info(f"Chat sessions listed successfully using service role for user ID: {user_id}")
 
-                for session in response.data:
-                    # Get associated documents
-                    doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session["id"]).execute()
-                    document_ids = [doc["document_id"] for doc in doc_response.data]
+                            for session in response.data:
+                                # Get associated documents using service role
+                                doc_response = service_supabase.table("session_documents").select("document_id").eq("session_id", session["id"]).execute()
+                                document_ids = [doc["document_id"] for doc in doc_response.data]
 
-                    sessions.append({
-                        "session_id": session["id"],
-                        "name": session["name"],
-                        "created_at": session["created_at"],
-                        "last_message_at": session["last_message_at"],
-                        "document_ids": document_ids
-                    })
+                                sessions.append({
+                                    "session_id": session["id"],
+                                    "name": session["name"],
+                                    "created_at": session["created_at"],
+                                    "last_message_at": session["last_message_at"],
+                                    "document_ids": document_ids
+                                })
+                        except Exception as service_error:
+                            logger.error(f"Error listing chat sessions using service role: {str(service_error)}")
+                            # Fall back to regular key
+                            logger.info(f"Falling back to regular key for listing chat sessions for user ID: {user_id}")
+                            response = self.supabase.table("chat_sessions").select("*").eq("user_id", user_id).order("last_message_at", desc=True).execute()
+                            logger.info(f"Chat sessions listed successfully for user ID: {user_id}")
+
+                            for session in response.data:
+                                # Get associated documents
+                                doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session["id"]).execute()
+                                document_ids = [doc["document_id"] for doc in doc_response.data]
+
+                                sessions.append({
+                                    "session_id": session["id"],
+                                    "name": session["name"],
+                                    "created_at": session["created_at"],
+                                    "last_message_at": session["last_message_at"],
+                                    "document_ids": document_ids
+                                })
+                    else:
+                        # No service key available, use regular key
+                        response = self.supabase.table("chat_sessions").select("*").eq("user_id", user_id).order("last_message_at", desc=True).execute()
+
+                        for session in response.data:
+                            # Get associated documents
+                            doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session["id"]).execute()
+                            document_ids = [doc["document_id"] for doc in doc_response.data]
+
+                            sessions.append({
+                                "session_id": session["id"],
+                                "name": session["name"],
+                                "created_at": session["created_at"],
+                                "last_message_at": session["last_message_at"],
+                                "document_ids": document_ids
+                            })
+                except Exception as list_error:
+                    logger.error(f"Error listing chat sessions: {str(list_error)}")
+                    # Continue with empty sessions list
 
             return {"sessions": sessions}
 
