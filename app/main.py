@@ -44,12 +44,29 @@ app = FastAPI(
 )
 
 # Add CORS middleware
+# Define allowed origins based on environment
+allowed_origins = [
+    "http://localhost:3000",  # Next.js development server
+    "http://127.0.0.1:3000",
+    "http://localhost:8000",  # FastAPI development server
+    "http://127.0.0.1:8000",
+]
+
+# Add production origins if not in development
+if getattr(settings, 'ENVIRONMENT', 'development') != "development":
+    allowed_origins.extend([
+        "https://anydocai.com",
+        "https://www.anydocai.com",
+        # Add any other production domains here
+    ])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, you should specify the allowed origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=allowed_origins,  # Specify allowed origins for security
+    allow_credentials=True,  # Required for cookies to work
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept"],
+    expose_headers=["Set-Cookie"],
 )
 
 # Include API router

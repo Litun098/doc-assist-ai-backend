@@ -3,8 +3,9 @@ Authentication service using Supabase.
 """
 import logging
 from typing import Dict, Optional, Any
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request, Cookie
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security.utils import get_authorization_scheme_param
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from supabase import create_client, Client
@@ -40,8 +41,40 @@ except Exception as e:
     logger.error(f"Traceback: {traceback.format_exc()}")
     supabase = None
 
-# Security scheme
-security = HTTPBearer()
+# Cookie name for authentication
+AUTH_COOKIE_NAME = "auth_token"
+
+# Custom security scheme that supports both cookies and bearer tokens
+class CookieOrHeaderAuth:
+    async def __call__(self, request: Request):
+        # First try to get the token from the cookie
+        token = request.cookies.get(AUTH_COOKIE_NAME)
+
+        # If no cookie, try to get from Authorization header
+        if not token:
+            authorization = request.headers.get("Authorization")
+            if authorization:
+                scheme, token = get_authorization_scheme_param(authorization)
+                if scheme.lower() != "bearer":
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid authentication scheme. Expected 'Bearer'",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+        # If no token found in either place, raise an exception
+        if not token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Return the token
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+# Initialize the security scheme
+security = CookieOrHeaderAuth()
 
 class AuthService:
     """Authentication service using Supabase."""

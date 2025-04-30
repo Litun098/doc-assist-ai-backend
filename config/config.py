@@ -10,6 +10,7 @@ class Settings:
     APP_NAME = os.getenv("APP_NAME", "AnyDocAI")
     APP_VERSION = os.getenv("APP_VERSION", "0.1.0")
     DEBUG = os.getenv("DEBUG", "True").lower() == "true"
+    ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
 
     # API settings
     API_PREFIX = "/api"
