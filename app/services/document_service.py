@@ -233,6 +233,7 @@ class DocumentService:
                             "file_id": doc["id"],
                             "file_name": doc["file_name"],
                             "file_type": doc["file_type"],
+                            "file_size": doc.get("file_size", 0),  # Include file size
                             "status": doc["status"],
                             "created_at": doc["created_at"]
                         })
@@ -248,10 +249,14 @@ class DocumentService:
                             file_id, ext = os.path.splitext(filename)
                             ext = ext.lstrip('.')
 
+                            # Get file size
+                            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+
                             documents.append({
                                 "file_id": file_id,
                                 "file_name": filename,
                                 "file_type": ext,
+                                "file_size": file_size,
                                 "status": "processed"
                             })
 
@@ -262,6 +267,144 @@ class DocumentService:
             raise HTTPException(
                 status_code=500,
                 detail=f"Error listing documents: {str(e)}"
+            )
+
+    async def get_document_preview(self, file_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Get a preview of a document.
+
+        Args:
+            file_id: ID of the file to preview
+            user_id: ID of the user
+
+        Returns:
+            Document preview data
+        """
+        try:
+            document = None
+            preview_text = ""
+
+            # Check if document exists in Supabase
+            if self.supabase:
+                try:
+                    # Try using service role key first to avoid RLS issues
+                    if settings.SUPABASE_SERVICE_KEY:
+                        try:
+                            logger.info(f"Getting document using service role for file ID: {file_id}")
+                            service_supabase = create_client(
+                                supabase_url=settings.SUPABASE_URL,
+                                supabase_key=settings.SUPABASE_SERVICE_KEY
+                            )
+                            response = service_supabase.table("documents").select("*").eq("id", file_id).eq("user_id", user_id).execute()
+                            logger.info(f"Document retrieved successfully using service role for file ID: {file_id}")
+                        except Exception as service_error:
+                            logger.error(f"Error getting document using service role: {str(service_error)}")
+                            # Fall back to regular key
+                            logger.info(f"Falling back to regular key for getting document for file ID: {file_id}")
+                            response = self.supabase.table("documents").select("*").eq("id", file_id).eq("user_id", user_id).execute()
+                            logger.info(f"Document retrieved successfully for file ID: {file_id}")
+                    else:
+                        # No service key available, use regular key
+                        response = self.supabase.table("documents").select("*").eq("id", file_id).eq("user_id", user_id).execute()
+
+                    if not response.data:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=f"Document with ID {file_id} not found or does not belong to user"
+                        )
+
+                    document = response.data[0]
+
+                    # Get document from S3 if available
+                    if s3_storage.is_available() and document["s3_key"]:
+                        # Get the file from S3
+                        temp_file_path = os.path.join(settings.UPLOAD_DIR, f"temp_{file_id}")
+                        s3_storage.download_file(document["s3_key"], temp_file_path)
+
+                        # Extract preview text based on file type
+                        file_type = document["file_type"].lower()
+                        if file_type == "pdf":
+                            # Extract first page of PDF
+                            from pypdf import PdfReader
+                            reader = PdfReader(temp_file_path)
+                            if len(reader.pages) > 0:
+                                preview_text = reader.pages[0].extract_text()[:1000]  # First 1000 chars
+                        elif file_type in ["docx", "doc"]:
+                            # Extract first page of Word document
+                            import docx
+                            doc = docx.Document(temp_file_path)
+                            if len(doc.paragraphs) > 0:
+                                preview_text = "\n".join([p.text for p in doc.paragraphs[:5]])[:1000]  # First 5 paragraphs
+                        elif file_type in ["txt", "md"]:
+                            # Extract first 1000 chars of text file
+                            with open(temp_file_path, "r", encoding="utf-8") as f:
+                                preview_text = f.read(1000)
+
+                        # Clean up temp file
+                        if os.path.exists(temp_file_path):
+                            os.remove(temp_file_path)
+                except Exception as e:
+                    logger.error(f"Error getting document preview: {str(e)}")
+                    preview_text = "Error generating preview. Please select the document to chat with it."
+            else:
+                # Fallback to local storage
+                file_path = None
+                file_name = None
+                file_type = None
+
+                if os.path.exists(settings.UPLOAD_DIR):
+                    for filename in os.listdir(settings.UPLOAD_DIR):
+                        if filename.startswith(file_id):
+                            file_path = os.path.join(settings.UPLOAD_DIR, filename)
+                            file_name = filename
+                            _, ext = os.path.splitext(filename)
+                            file_type = ext.lstrip('.')
+                            break
+
+                if not file_path:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"File with ID {file_id} not found"
+                    )
+
+                # Extract preview text based on file type
+                if file_type.lower() == "pdf":
+                    # Extract first page of PDF
+                    from pypdf import PdfReader
+                    reader = PdfReader(file_path)
+                    if len(reader.pages) > 0:
+                        preview_text = reader.pages[0].extract_text()[:1000]  # First 1000 chars
+                elif file_type.lower() in ["docx", "doc"]:
+                    # Extract first page of Word document
+                    import docx
+                    doc = docx.Document(file_path)
+                    if len(doc.paragraphs) > 0:
+                        preview_text = "\n".join([p.text for p in doc.paragraphs[:5]])[:1000]  # First 5 paragraphs
+                elif file_type.lower() in ["txt", "md"]:
+                    # Extract first 1000 chars of text file
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        preview_text = f.read(1000)
+
+                document = {
+                    "id": file_id,
+                    "file_name": file_name,
+                    "file_type": file_type
+                }
+
+            return {
+                "file_id": file_id,
+                "file_name": document["file_name"],
+                "file_type": document["file_type"],
+                "preview_text": preview_text or "No preview available. Please select the document to chat with it."
+            }
+
+        except HTTPException as e:
+            raise e
+        except Exception as e:
+            logger.error(f"Error getting document preview: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error getting document preview: {str(e)}"
             )
 
     async def delete_document(self, file_id: str, user_id: str) -> Dict[str, Any]:

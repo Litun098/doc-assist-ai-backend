@@ -36,14 +36,14 @@ class ChatService:
         self.rag_service = rag_service
         self.agent_service = agent_service
 
-    async def create_session(self, user_id: str, name: str, document_ids: List[str]) -> Dict[str, Any]:
+    async def create_session(self, user_id: str, name: str, document_ids: List[str] = None) -> Dict[str, Any]:
         """
         Create a new chat session.
 
         Args:
             user_id: ID of the user
             name: Name of the session
-            document_ids: List of document IDs to associate with the session
+            document_ids: List of document IDs to associate with the session (optional)
 
         Returns:
             Session information
@@ -51,6 +51,10 @@ class ChatService:
         try:
             # Create session ID
             session_id = str(uuid.uuid4())
+
+            # Initialize document_ids if None
+            if document_ids is None:
+                document_ids = []
 
             # Create session in Supabase if available
             if self.supabase:
@@ -74,13 +78,14 @@ class ChatService:
                         service_supabase.table("chat_sessions").insert(session_data).execute()
                         logger.info(f"Chat session created successfully using service role for user ID: {user_id}")
 
-                        # Associate documents with session using service role
-                        for doc_id in document_ids:
-                            service_supabase.table("session_documents").insert({
-                                "session_id": session_id,
-                                "document_id": doc_id
-                            }).execute()
-                        logger.info(f"Documents associated with session successfully using service role")
+                        # Associate documents with session using service role (if any)
+                        if document_ids:
+                            for doc_id in document_ids:
+                                service_supabase.table("session_documents").insert({
+                                    "session_id": session_id,
+                                    "document_id": doc_id
+                                }).execute()
+                            logger.info(f"Documents associated with session successfully using service role")
                     except Exception as service_error:
                         logger.error(f"Error creating chat session using service role: {str(service_error)}")
                         # Fall back to regular key
@@ -88,23 +93,25 @@ class ChatService:
                         self.supabase.table("chat_sessions").insert(session_data).execute()
                         logger.info(f"Chat session created successfully for user ID: {user_id}")
 
-                        # Associate documents with session
+                        # Associate documents with session (if any)
+                        if document_ids:
+                            for doc_id in document_ids:
+                                self.supabase.table("session_documents").insert({
+                                    "session_id": session_id,
+                                    "document_id": doc_id
+                                }).execute()
+                            logger.info(f"Documents associated with session successfully")
+                else:
+                    # No service key available, use regular key
+                    self.supabase.table("chat_sessions").insert(session_data).execute()
+
+                    # Associate documents with session (if any)
+                    if document_ids:
                         for doc_id in document_ids:
                             self.supabase.table("session_documents").insert({
                                 "session_id": session_id,
                                 "document_id": doc_id
                             }).execute()
-                        logger.info(f"Documents associated with session successfully")
-                else:
-                    # No service key available, use regular key
-                    self.supabase.table("chat_sessions").insert(session_data).execute()
-
-                    # Associate documents with session
-                    for doc_id in document_ids:
-                        self.supabase.table("session_documents").insert({
-                            "session_id": session_id,
-                            "document_id": doc_id
-                        }).execute()
 
             return {
                 "session_id": session_id,
@@ -205,6 +212,219 @@ class ChatService:
             raise HTTPException(
                 status_code=500,
                 detail=f"Error listing chat sessions: {str(e)}"
+            )
+
+    async def add_documents_to_session(self, session_id: str, user_id: str, document_ids: List[str]) -> Dict[str, Any]:
+        """
+        Add documents to an existing chat session.
+
+        Args:
+            session_id: ID of the session
+            user_id: ID of the user
+            document_ids: List of document IDs to add to the session
+
+        Returns:
+            Updated session information
+        """
+        try:
+            # Check if session exists and belongs to user
+            if self.supabase:
+                # Try using service role key first to avoid RLS issues
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        logger.info(f"Checking session using service role for user ID: {user_id}")
+                        service_supabase = create_client(
+                            supabase_url=settings.SUPABASE_URL,
+                            supabase_key=settings.SUPABASE_SERVICE_KEY
+                        )
+                        session_response = service_supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                        logger.info(f"Session checked successfully using service role")
+                    except Exception as service_error:
+                        logger.error(f"Error checking session using service role: {str(service_error)}")
+                        # Fall back to regular key
+                        logger.info(f"Falling back to regular key for checking session")
+                        session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                else:
+                    # No service key available, use regular key
+                    session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+
+                if not session_response.data:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Chat session with ID {session_id} not found or does not belong to user"
+                    )
+
+                # Get existing document IDs for this session
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        doc_response = service_supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+                    except Exception:
+                        doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+                else:
+                    doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+
+                existing_doc_ids = [doc["document_id"] for doc in doc_response.data]
+
+                # Add new documents to session
+                added_doc_ids = []
+                for doc_id in document_ids:
+                    # Skip if document is already associated with this session
+                    if doc_id in existing_doc_ids:
+                        continue
+
+                    # Add document to session
+                    if settings.SUPABASE_SERVICE_KEY:
+                        try:
+                            service_supabase.table("session_documents").insert({
+                                "session_id": session_id,
+                                "document_id": doc_id
+                            }).execute()
+                        except Exception:
+                            self.supabase.table("session_documents").insert({
+                                "session_id": session_id,
+                                "document_id": doc_id
+                            }).execute()
+                    else:
+                        self.supabase.table("session_documents").insert({
+                            "session_id": session_id,
+                            "document_id": doc_id
+                        }).execute()
+
+                    added_doc_ids.append(doc_id)
+
+                # Update session last updated time
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        service_supabase.table("chat_sessions").update({
+                            "updated_at": datetime.now().isoformat()
+                        }).eq("id", session_id).execute()
+                    except Exception:
+                        self.supabase.table("chat_sessions").update({
+                            "updated_at": datetime.now().isoformat()
+                        }).eq("id", session_id).execute()
+                else:
+                    self.supabase.table("chat_sessions").update({
+                        "updated_at": datetime.now().isoformat()
+                    }).eq("id", session_id).execute()
+
+                # Get all document IDs for this session after adding new ones
+                all_doc_ids = existing_doc_ids + added_doc_ids
+
+                return {
+                    "session_id": session_id,
+                    "document_ids": all_doc_ids,
+                    "added_document_ids": added_doc_ids,
+                    "updated_at": datetime.now().isoformat()
+                }
+
+            raise HTTPException(
+                status_code=500,
+                detail="Database connection not available"
+            )
+
+        except HTTPException as e:
+            raise e
+        except Exception as e:
+            logger.error(f"Error adding documents to chat session: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error adding documents to chat session: {str(e)}"
+            )
+
+    async def remove_document_from_session(self, session_id: str, user_id: str, document_id: str) -> Dict[str, Any]:
+        """
+        Remove a document from a chat session.
+
+        Args:
+            session_id: ID of the session
+            user_id: ID of the user
+            document_id: ID of the document to remove
+
+        Returns:
+            Updated session information
+        """
+        try:
+            # Check if session exists and belongs to user
+            if self.supabase:
+                # Try using service role key first to avoid RLS issues
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        logger.info(f"Checking session using service role for user ID: {user_id}")
+                        service_supabase = create_client(
+                            supabase_url=settings.SUPABASE_URL,
+                            supabase_key=settings.SUPABASE_SERVICE_KEY
+                        )
+                        session_response = service_supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                        logger.info(f"Session checked successfully using service role")
+                    except Exception as service_error:
+                        logger.error(f"Error checking session using service role: {str(service_error)}")
+                        # Fall back to regular key
+                        logger.info(f"Falling back to regular key for checking session")
+                        session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                else:
+                    # No service key available, use regular key
+                    session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+
+                if not session_response.data:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Chat session with ID {session_id} not found or does not belong to user"
+                    )
+
+                # Remove document from session
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        service_supabase.table("session_documents").delete().eq("session_id", session_id).eq("document_id", document_id).execute()
+                    except Exception:
+                        self.supabase.table("session_documents").delete().eq("session_id", session_id).eq("document_id", document_id).execute()
+                else:
+                    self.supabase.table("session_documents").delete().eq("session_id", session_id).eq("document_id", document_id).execute()
+
+                # Update session last updated time
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        service_supabase.table("chat_sessions").update({
+                            "updated_at": datetime.now().isoformat()
+                        }).eq("id", session_id).execute()
+                    except Exception:
+                        self.supabase.table("chat_sessions").update({
+                            "updated_at": datetime.now().isoformat()
+                        }).eq("id", session_id).execute()
+                else:
+                    self.supabase.table("chat_sessions").update({
+                        "updated_at": datetime.now().isoformat()
+                    }).eq("id", session_id).execute()
+
+                # Get remaining document IDs for this session
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        doc_response = service_supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+                    except Exception:
+                        doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+                else:
+                    doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+
+                remaining_doc_ids = [doc["document_id"] for doc in doc_response.data]
+
+                return {
+                    "session_id": session_id,
+                    "document_ids": remaining_doc_ids,
+                    "removed_document_id": document_id,
+                    "updated_at": datetime.now().isoformat()
+                }
+
+            raise HTTPException(
+                status_code=500,
+                detail="Database connection not available"
+            )
+
+        except HTTPException as e:
+            raise e
+        except Exception as e:
+            logger.error(f"Error removing document from chat session: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error removing document from chat session: {str(e)}"
             )
 
     async def delete_session(self, session_id: str, user_id: str) -> Dict[str, Any]:
