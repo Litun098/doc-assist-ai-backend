@@ -232,9 +232,15 @@ class AuthService:
             # Register user with Supabase Auth
             logger.info(f"Attempting to register user with email: {email}")
             try:
+                # Include full_name in user metadata
                 auth_response = self.supabase.auth.sign_up({
                     "email": email,
-                    "password": password
+                    "password": password,
+                    "options": {
+                        "data": {
+                            "full_name": full_name
+                        }
+                    }
                 })
 
                 logger.info(f"User registration successful for email: {email}")
@@ -395,9 +401,14 @@ class AuthService:
 
             if not user_response.data:
                 # User exists in auth but not in our users table, create the record
+                # Try to get user metadata for full_name
+                user_metadata = auth_response.user.user_metadata or {}
+                full_name = user_metadata.get('full_name')
+
                 user_data = {
                     "id": auth_response.user.id,
                     "email": email,
+                    "full_name": full_name,  # Include full_name from metadata if available
                     "subscription_tier": "free",
                     "created_at": datetime.now().isoformat(),
                     "updated_at": datetime.now().isoformat(),
