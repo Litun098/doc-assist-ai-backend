@@ -61,6 +61,8 @@ AnyDocAI is an AI document assistant that lets you chat with all your files — 
 
 - **POST /api/auth/register**: Register a new user
 - **POST /api/auth/login**: Login a user
+- **GET /api/auth/me**: Get current user information
+- **POST /api/auth/logout**: Logout a user
 - **POST /api/files/upload**: Upload a file
 - **GET /api/files**: List files for a user
 - **GET /api/files/{file_id}**: Get file details

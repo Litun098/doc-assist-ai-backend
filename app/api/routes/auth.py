@@ -31,6 +31,8 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+
+
 @router.post("/register")
 async def register(user_data: UserCreate, response: Response):
     """
@@ -169,3 +171,5 @@ async def logout(response: Response):
         "status": "ok",
         "message": "Logged out successfully"
     }
+
+

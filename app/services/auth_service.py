@@ -483,5 +483,7 @@ class AuthService:
                 detail=f"Login error: {str(e)}"
             )
 
+
+
 # Create a singleton instance
 auth_service = AuthService()
