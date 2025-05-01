@@ -36,7 +36,7 @@ This document outlines features and APIs that need to be implemented in future i
 
 ### Document Management
 - **DELETE /api/documents/{document_id}**: Delete a document
-  - Status: Partially implemented, needs testing
+  - Status: Implemented
 
 ### Chat Session Management
 - **PUT /api/chat/sessions/{session_id}**: Update a chat session (rename, etc.)
@@ -44,10 +44,13 @@ This document outlines features and APIs that need to be implemented in future i
   - Response: Updated session information
   - Status: Not implemented
 
-- **PUT /api/chat/sessions/{session_id}/documents**: Update documents in a session
-  - Request: `{ document_ids: [] }`
-  - Response: Updated session information
-  - Status: Not implemented
+- **GET /api/chat/sessions/{session_id}**: Get a specific chat session
+  - Response: Session details
+  - Status: Implemented in frontend, needs backend implementation
+
+- **GET /api/chat/sessions/{session_id}/documents**: Get documents in a session
+  - Response: List of documents in the session
+  - Status: Implemented in frontend, needs backend implementation
 
 ## Frontend Features to Implement
 
@@ -66,9 +69,9 @@ This document outlines features and APIs that need to be implemented in future i
 - Implement document search functionality
 
 ### Chat Session Management
-- Implement session renaming functionality
-- Add ability to add/remove documents from existing sessions
-- Implement session deletion with confirmation
+- Implement session renaming functionality (requires backend API)
+- ✅ Add ability to add/remove documents from existing sessions
+- ✅ Implement session deletion with confirmation
 
 ## Infrastructure Improvements
 
