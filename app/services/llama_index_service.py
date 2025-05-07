@@ -3,6 +3,7 @@ LlamaIndex service for document processing, indexing, and querying.
 """
 import os
 import uuid
+import time
 from typing import List, Dict, Any
 from datetime import datetime
 # import asyncio
@@ -75,25 +76,47 @@ class LlamaIndexService:
                     weaviate_url = f"https://{weaviate_url}"
 
                 logger.info(f"Connecting to Weaviate at {weaviate_url}")
-                self.weaviate_client = weaviate.connect_to_weaviate_cloud(
-                    cluster_url=weaviate_url,
-                    auth_credentials=Auth.api_key(settings.WEAVIATE_API_KEY),
-                    skip_init_checks=True,  # Skip initialization checks
-                    additional_config=AdditionalConfig(
-                        timeout=Timeout(init=60)  # Increase timeout to 60 seconds
-                    )
-                )
 
-                # Create vector store with the updated API
-                self.vector_store = WeaviateVectorStore(
-                    weaviate_client=self.weaviate_client,
-                    index_name=settings.LLAMAINDEX_INDEX_NAME,
-                    text_key="content",
-                    metadata_keys=["file_id", "user_id", "page_number", "chunk_index", "heading", "chunking_strategy"]
-                )
+                # Use a try-except block with multiple connection attempts
+                max_retries = 3
+                retry_count = 0
+                connection_successful = False
 
-                # Create schema if it doesn't exist
-                self._create_schema_if_not_exists()
+                while retry_count < max_retries and not connection_successful:
+                    try:
+                        self.weaviate_client = weaviate.connect_to_weaviate_cloud(
+                            cluster_url=weaviate_url,
+                            auth_credentials=Auth.api_key(settings.WEAVIATE_API_KEY),
+                            skip_init_checks=True,  # Skip initialization checks
+                            additional_config=AdditionalConfig(
+                                timeout=Timeout(init=60)  # Increase timeout to 60 seconds
+                            )
+                        )
+                        connection_successful = True
+                        logger.info("Successfully connected to Weaviate")
+                    except Exception as e:
+                        retry_count += 1
+                        logger.warning(f"Weaviate connection attempt {retry_count} failed: {str(e)}")
+                        if retry_count < max_retries:
+                            logger.info(f"Retrying connection to Weaviate ({retry_count}/{max_retries})...")
+                            time.sleep(1)  # Wait 1 second before retrying
+
+                # Only proceed with vector store creation if connection was successful
+                if connection_successful and self.weaviate_client:
+                    try:
+                        # Create vector store with the updated API
+                        self.vector_store = WeaviateVectorStore(
+                            weaviate_client=self.weaviate_client,
+                            index_name=settings.LLAMAINDEX_INDEX_NAME,
+                            text_key="content",
+                            metadata_keys=["file_id", "user_id", "page_number", "chunk_index", "heading", "chunking_strategy"]
+                        )
+
+                        # Create schema if it doesn't exist
+                        self._create_schema_if_not_exists()
+                    except Exception as e:
+                        logger.error(f"Error creating vector store: {str(e)}")
+                        self.vector_store = None
             except Exception as e:
                 logger.error(f"Error connecting to Weaviate: {str(e)}")
                 self.weaviate_client = None
@@ -344,14 +367,14 @@ class LlamaIndexService:
         if chunking_strategy == ChunkingStrategy.FIXED_SIZE:
             # Use simple fixed-size chunking
             node_parser = SimpleNodeParser.from_defaults(
-                chunk_size=settings.CHUNK_SIZE,
-                chunk_overlap=settings.CHUNK_OVERLAP
+                chunk_size=settings.LLAMAINDEX_CHUNK_SIZE,
+                chunk_overlap=settings.LLAMAINDEX_CHUNK_OVERLAP
             )
         elif chunking_strategy == ChunkingStrategy.SEMANTIC:
             # Use sentence-based chunking for more semantic coherence
             node_parser = SentenceSplitter(
-                chunk_size=settings.CHUNK_SIZE,
-                chunk_overlap=settings.CHUNK_OVERLAP,
+                chunk_size=settings.LLAMAINDEX_CHUNK_SIZE,
+                chunk_overlap=settings.LLAMAINDEX_CHUNK_OVERLAP,
                 paragraph_separator="\n\n",
                 secondary_chunking_regex="[^,.;。]+[,.;。]?",
             )
@@ -359,8 +382,8 @@ class LlamaIndexService:
             # Use a combination based on document type
             # For now, we'll use the same as SEMANTIC, but this could be enhanced
             node_parser = SentenceSplitter(
-                chunk_size=settings.CHUNK_SIZE,
-                chunk_overlap=settings.CHUNK_OVERLAP,
+                chunk_size=settings.LLAMAINDEX_CHUNK_SIZE,
+                chunk_overlap=settings.LLAMAINDEX_CHUNK_OVERLAP,
                 paragraph_separator="\n\n",
                 secondary_chunking_regex="[^,.;。]+[,.;。]?",
             )

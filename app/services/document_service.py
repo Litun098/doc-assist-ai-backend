@@ -16,14 +16,17 @@ from config.config import settings
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Initialize Supabase client
+# Import connection manager
+from app.utils.connection_manager import connection_manager
+
+# Initialize Supabase client using connection manager
 try:
-    # Create Supabase client without proxy parameter
-    supabase: Client = create_client(
-        supabase_url=settings.SUPABASE_URL,
-        supabase_key=settings.SUPABASE_KEY
-    )
-    logger.info(f"Connected to Supabase at {settings.SUPABASE_URL}")
+    # Get Supabase client from connection manager
+    supabase = connection_manager.get_supabase_client("default")
+    if supabase:
+        logger.info(f"Connected to Supabase at {settings.SUPABASE_URL}")
+    else:
+        logger.error("Failed to get Supabase client from connection manager")
 except Exception as e:
     logger.error(f"Error connecting to Supabase: {str(e)}")
     supabase = None

@@ -28,6 +28,10 @@ class SessionRequest(BaseModel):
     name: str
     document_ids: Optional[List[str]] = Field(default=None, description="Optional list of document IDs to associate with the session")
 
+class SessionUpdateRequest(BaseModel):
+    """Request model for updating a chat session."""
+    name: str
+
 class ChatResponse(BaseModel):
     """Response model for chat."""
     response: str
@@ -217,6 +221,69 @@ async def send_message(
     )
 
 # Legacy endpoints for backward compatibility
+
+@router.get("/sessions/{session_id}", response_model=SessionResponse)
+async def get_session(
+    session_id: str,
+    current_user = Depends(auth_service.get_current_user)
+):
+    """
+    Get a specific chat session.
+
+    Args:
+        session_id: ID of the session
+        current_user: Current authenticated user
+
+    Returns:
+        SessionResponse with session details
+    """
+    return await chat_service.get_session(
+        session_id=session_id,
+        user_id=current_user["id"]
+    )
+
+@router.put("/sessions/{session_id}", response_model=SessionResponse)
+async def update_session(
+    session_id: str,
+    request: SessionUpdateRequest,
+    current_user = Depends(auth_service.get_current_user)
+):
+    """
+    Update a chat session (rename, etc.).
+
+    Args:
+        session_id: ID of the session
+        request: SessionUpdateRequest with new session details
+        current_user: Current authenticated user
+
+    Returns:
+        SessionResponse with updated session details
+    """
+    return await chat_service.update_session(
+        session_id=session_id,
+        user_id=current_user["id"],
+        name=request.name
+    )
+
+@router.get("/sessions/{session_id}/documents", response_model=Dict[str, List[str]])
+async def get_session_documents(
+    session_id: str,
+    current_user = Depends(auth_service.get_current_user)
+):
+    """
+    Get documents in a chat session.
+
+    Args:
+        session_id: ID of the session
+        current_user: Current authenticated user
+
+    Returns:
+        List of document IDs in the session
+    """
+    return await chat_service.get_session_documents(
+        session_id=session_id,
+        user_id=current_user["id"]
+    )
 
 @router.post("/message", response_model=ChatResponse)
 async def chat_message(

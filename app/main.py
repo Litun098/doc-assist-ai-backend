@@ -23,17 +23,28 @@ async def lifespan(_app: FastAPI):
     Lifespan event handler for FastAPI application.
     Handles startup and shutdown events.
     """
-    # Startup: Nothing to do here for now
+    # Startup: Initialize services safely
+    try:
+        # Import here to avoid circular imports
+        from app.services.llama_index_service import llama_index_service
+        logger.info("Services initialized successfully")
+    except Exception as e:
+        logger.error(f"Error initializing services: {str(e)}")
+        # Continue even if there's an error - we'll handle it in the routes
+
     yield
 
     # Shutdown: Clean up resources
-    from app.services.llama_index_service import llama_index_service
-    if hasattr(llama_index_service, 'weaviate_client') and llama_index_service.weaviate_client:
-        try:
-            llama_index_service.weaviate_client.close()
-            logger.info("Weaviate connection closed successfully")
-        except Exception as e:
-            logger.error(f"Error closing Weaviate connection: {str(e)}")
+    try:
+        from app.services.llama_index_service import llama_index_service
+        if hasattr(llama_index_service, 'weaviate_client') and llama_index_service.weaviate_client:
+            try:
+                llama_index_service.weaviate_client.close()
+                logger.info("Weaviate connection closed successfully")
+            except Exception as e:
+                logger.error(f"Error closing Weaviate connection: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error during shutdown: {str(e)}")
 
 # Create FastAPI app with lifespan handler
 app = FastAPI(

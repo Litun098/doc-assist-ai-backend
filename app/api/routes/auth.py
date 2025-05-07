@@ -3,7 +3,7 @@ Authentication routes.
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Cookie
 from pydantic import BaseModel, EmailStr
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 
 from app.services.auth_service import auth_service
@@ -29,6 +29,24 @@ class UserCreate(BaseModel):
 class UserLogin(BaseModel):
     """Request model for user login."""
     email: EmailStr
+    password: str
+
+class ProfileUpdate(BaseModel):
+    """Request model for profile update."""
+    full_name: str
+    email: EmailStr
+
+class PasswordChange(BaseModel):
+    """Request model for password change."""
+    current_password: str
+    new_password: str
+
+class TwoFactorVerify(BaseModel):
+    """Request model for 2FA verification."""
+    code: str
+
+class AccountDelete(BaseModel):
+    """Request model for account deletion."""
     password: str
 
 
@@ -171,5 +189,131 @@ async def logout(response: Response):
         "status": "ok",
         "message": "Logged out successfully"
     }
+
+@router.put("/update-profile")
+async def update_profile(
+    profile_data: ProfileUpdate,
+    current_user = Depends(auth_service.get_current_user)
+):
+    """
+    Update user profile information.
+
+    Args:
+        profile_data: ProfileUpdate with new profile information
+        current_user: Current authenticated user
+
+    Returns:
+        Updated user information
+    """
+    return await auth_service.update_profile(
+        user_id=current_user["id"],
+        full_name=profile_data.full_name,
+        email=profile_data.email
+    )
+
+@router.put("/change-password")
+async def change_password(
+    password_data: PasswordChange,
+    current_user = Depends(auth_service.get_current_user)
+):
+    """
+    Change user password.
+
+    Args:
+        password_data: PasswordChange with current and new passwords
+        current_user: Current authenticated user
+
+    Returns:
+        Success message
+    """
+    return await auth_service.change_password(
+        user_id=current_user["id"],
+        current_password=password_data.current_password,
+        new_password=password_data.new_password
+    )
+
+@router.post("/enable-2fa")
+async def enable_2fa(current_user = Depends(auth_service.get_current_user)):
+    """
+    Enable two-factor authentication.
+
+    Args:
+        current_user: Current authenticated user
+
+    Returns:
+        2FA setup information (QR code, backup codes)
+    """
+    return await auth_service.enable_2fa(current_user["id"])
+
+@router.post("/verify-2fa")
+async def verify_2fa(
+    verify_data: TwoFactorVerify,
+    current_user = Depends(auth_service.get_current_user)
+):
+    """
+    Verify and complete two-factor authentication setup.
+
+    Args:
+        verify_data: TwoFactorVerify with verification code
+        current_user: Current authenticated user
+
+    Returns:
+        Success message
+    """
+    return await auth_service.verify_2fa(
+        user_id=current_user["id"],
+        code=verify_data.code
+    )
+
+@router.delete("/disable-2fa")
+async def disable_2fa(
+    verify_data: TwoFactorVerify,
+    current_user = Depends(auth_service.get_current_user)
+):
+    """
+    Disable two-factor authentication.
+
+    Args:
+        verify_data: TwoFactorVerify with verification code
+        current_user: Current authenticated user
+
+    Returns:
+        Success message
+    """
+    return await auth_service.disable_2fa(
+        user_id=current_user["id"],
+        code=verify_data.code
+    )
+
+@router.delete("/delete-account")
+async def delete_account(
+    response: Response,
+    account_data: AccountDelete,
+    current_user = Depends(auth_service.get_current_user)
+):
+    """
+    Delete user account.
+
+    Args:
+        response: FastAPI Response object for clearing cookies
+        account_data: AccountDelete with password for verification
+        current_user: Current authenticated user
+
+    Returns:
+        Success message
+    """
+    result = await auth_service.delete_account(
+        user_id=current_user["id"],
+        password=account_data.password
+    )
+
+    # Clear the auth cookie
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        path=COOKIE_PATH,
+        domain=COOKIE_DOMAIN
+    )
+
+    return result
 
 

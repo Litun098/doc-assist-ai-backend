@@ -8,31 +8,31 @@ This document outlines features and APIs that need to be implemented in future i
 - **PUT /api/auth/update-profile**: Update user profile information
   - Request: `{ full_name, email }`
   - Response: Updated user information
-  - Status: Not implemented
+  - Status: Implemented
 
 - **PUT /api/auth/change-password**: Change user password
   - Request: `{ current_password, new_password }`
   - Response: Success message
-  - Status: Not implemented
+  - Status: Implemented
 
 - **POST /api/auth/enable-2fa**: Enable two-factor authentication
   - Response: 2FA setup information (QR code, backup codes)
-  - Status: Not implemented
+  - Status: Implemented
 
 - **POST /api/auth/verify-2fa**: Verify two-factor authentication
   - Request: `{ code }`
   - Response: Success message
-  - Status: Not implemented
+  - Status: Implemented
 
 - **DELETE /api/auth/disable-2fa**: Disable two-factor authentication
   - Request: `{ code }`
   - Response: Success message
-  - Status: Not implemented
+  - Status: Implemented
 
 - **DELETE /api/auth/delete-account**: Delete user account
   - Request: `{ password }`
   - Response: Success message
-  - Status: Not implemented
+  - Status: Implemented
 
 ### Document Management
 - **DELETE /api/documents/{document_id}**: Delete a document
@@ -42,15 +42,15 @@ This document outlines features and APIs that need to be implemented in future i
 - **PUT /api/chat/sessions/{session_id}**: Update a chat session (rename, etc.)
   - Request: `{ name }`
   - Response: Updated session information
-  - Status: Not implemented
+  - Status: Implemented
 
 - **GET /api/chat/sessions/{session_id}**: Get a specific chat session
   - Response: Session details
-  - Status: Implemented in frontend, needs backend implementation
+  - Status: Implemented
 
 - **GET /api/chat/sessions/{session_id}/documents**: Get documents in a session
   - Response: List of documents in the session
-  - Status: Implemented in frontend, needs backend implementation
+  - Status: Implemented
 
 ## Frontend Features to Implement
 
