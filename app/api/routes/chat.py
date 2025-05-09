@@ -82,6 +82,10 @@ class RemoveDocumentResponse(BaseModel):
     removed_document_id: str
     updated_at: str
 
+class SessionDocumentsResponse(BaseModel):
+    """Response model for getting documents in a session."""
+    document_ids: List[str]
+
 @router.post("/sessions", response_model=SessionResponse)
 async def create_session(
     request: SessionRequest,
@@ -265,7 +269,7 @@ async def update_session(
         name=request.name
     )
 
-@router.get("/sessions/{session_id}/documents", response_model=Dict[str, List[str]])
+@router.get("/sessions/{session_id}/documents", response_model=SessionDocumentsResponse)
 async def get_session_documents(
     session_id: str,
     current_user = Depends(auth_service.get_current_user)
@@ -278,12 +282,14 @@ async def get_session_documents(
         current_user: Current authenticated user
 
     Returns:
-        List of document IDs in the session
+        SessionDocumentsResponse with list of document IDs in the session
     """
-    return await chat_service.get_session_documents(
+    result = await chat_service.get_session_documents(
         session_id=session_id,
         user_id=current_user["id"]
     )
+    # Extract just the document_ids from the result
+    return {"document_ids": result["document_ids"]}
 
 @router.post("/message", response_model=ChatResponse)
 async def chat_message(
