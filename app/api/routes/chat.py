@@ -54,6 +54,10 @@ class MessageListResponse(BaseModel):
     """Response model for listing messages."""
     messages: List[Dict[str, Any]]
 
+class DocumentListResponse(BaseModel):
+    """Response model for listing documents in a session."""
+    documents: List[Dict[str, Any]]
+
 class DeleteResponse(BaseModel):
     """Response model for delete operations."""
     session_id: str
@@ -174,6 +178,23 @@ async def delete_session(
         DeleteResponse with deletion status
     """
     return await chat_service.delete_session(session_id, current_user["id"])
+
+@router.get("/sessions/{session_id}/documents", response_model=DocumentListResponse)
+async def get_session_documents(
+    session_id: str,
+    current_user = Depends(auth_service.get_current_user)
+):
+    """
+    Get all documents for a chat session with their details.
+
+    Args:
+        session_id: ID of the session
+        current_user: Current authenticated user
+
+    Returns:
+        DocumentListResponse with list of documents and their details
+    """
+    return await chat_service.get_session_documents(session_id, current_user["id"])
 
 @router.get("/sessions/{session_id}/messages", response_model=MessageListResponse)
 async def get_messages(
