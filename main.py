@@ -3,7 +3,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.routes import router as api_router
+from app.api.routes.auth import router as auth_router
+from app.api.routes.chat import router as chat_router
+from app.api.routes.documents import router as documents_router
+from app.api.agent_routes import router as agent_router
+from app.api.llama_index_routes import router as llama_index_router
 from app.api.standalone_agent_routes import router as standalone_agent_router
 from app.api.simple_combined_routes import router as simple_combined_router
 from config.config import settings
@@ -28,7 +32,11 @@ app.add_middleware(
 )
 
 # Mount API routes
-app.include_router(api_router, prefix=settings.API_PREFIX)
+app.include_router(auth_router, prefix=settings.API_PREFIX)
+app.include_router(chat_router, prefix=settings.API_PREFIX)
+app.include_router(documents_router, prefix=settings.API_PREFIX)
+app.include_router(agent_router, prefix=settings.API_PREFIX)
+app.include_router(llama_index_router, prefix=settings.API_PREFIX)
 
 # Mount Standalone Agent routes
 app.include_router(standalone_agent_router, prefix=settings.API_PREFIX)

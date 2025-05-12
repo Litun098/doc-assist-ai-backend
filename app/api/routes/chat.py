@@ -8,6 +8,7 @@ from datetime import datetime
 
 from app.services.chat_service import chat_service
 from app.services.auth_service import auth_service
+from app.services.suggestion_service import suggestion_service
 
 router = APIRouter()
 
@@ -81,6 +82,11 @@ class RemoveDocumentResponse(BaseModel):
     document_ids: List[str]
     removed_document_id: str
     updated_at: str
+
+class SuggestionResponse(BaseModel):
+    """Response model for query suggestions."""
+    session_id: str
+    suggestions: List[str]
 
 @router.post("/sessions", response_model=SessionResponse)
 async def create_session(
@@ -236,6 +242,41 @@ async def send_message(
         message=request.message,
         use_agent=request.use_agent
     )
+
+@router.get("/sessions/{session_id}/suggestions", response_model=SuggestionResponse)
+async def get_suggestions(
+    session_id: str,
+    current_user = Depends(auth_service.get_current_user)
+):
+    """
+    Get suggested queries for a chat session based on the documents.
+
+    Args:
+        session_id: ID of the session
+        current_user: Current authenticated user
+
+    Returns:
+        SuggestionResponse with list of suggested queries
+    """
+    # Verify session belongs to user
+    session = await chat_service.get_session(session_id, current_user["id"])
+
+    # Get document IDs from session
+    document_ids = []
+    if "document_ids" in session:
+        document_ids = session["document_ids"]
+
+    # Generate suggestions
+    suggestions = await suggestion_service.generate_suggestions(
+        session_id=session_id,
+        user_id=current_user["id"],
+        document_ids=document_ids
+    )
+
+    return {
+        "session_id": session_id,
+        "suggestions": suggestions
+    }
 
 # Legacy endpoints for backward compatibility
 
