@@ -10,6 +10,7 @@ from supabase import create_client, Client
 
 from app.services.rag_service import rag_service
 from app.services.agent_service import agent_service
+from app.utils.s3_storage import s3_storage
 from config.config import settings
 
 # Configure logging
@@ -674,16 +675,52 @@ class ChatService:
         try:
             # Check if session exists and belongs to user
             if self.supabase:
-                response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                # Try using service role key first to avoid RLS issues
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        logger.info(f"Checking session using service role for user ID: {user_id}")
+                        service_supabase = create_client(
+                            supabase_url=settings.SUPABASE_URL,
+                            supabase_key=settings.SUPABASE_SERVICE_KEY
+                        )
+                        session_response = service_supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                        logger.info(f"Session checked successfully using service role")
 
-                if not response.data:
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"Chat session with ID {session_id} not found or does not belong to user"
-                    )
+                        if not session_response.data:
+                            raise HTTPException(
+                                status_code=404,
+                                detail=f"Chat session with ID {session_id} not found or does not belong to user"
+                            )
 
-                # Delete session (cascade will delete messages and document associations)
-                self.supabase.table("chat_sessions").delete().eq("id", session_id).execute()
+                        # Delete session (cascade will delete messages and document associations)
+                        service_supabase.table("chat_sessions").delete().eq("id", session_id).execute()
+                        logger.info(f"Session deleted successfully using service role")
+                    except Exception as service_error:
+                        logger.error(f"Error using service role: {str(service_error)}")
+                        # Fall back to regular key
+                        logger.info(f"Falling back to regular key for session deletion")
+                        session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+
+                        if not session_response.data:
+                            raise HTTPException(
+                                status_code=404,
+                                detail=f"Chat session with ID {session_id} not found or does not belong to user"
+                            )
+
+                        # Delete session (cascade will delete messages and document associations)
+                        self.supabase.table("chat_sessions").delete().eq("id", session_id).execute()
+                else:
+                    # No service key available, use regular key
+                    session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+
+                    if not session_response.data:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=f"Chat session with ID {session_id} not found or does not belong to user"
+                        )
+
+                    # Delete session (cascade will delete messages and document associations)
+                    self.supabase.table("chat_sessions").delete().eq("id", session_id).execute()
 
             return {
                 "session_id": session_id,
@@ -700,6 +737,175 @@ class ChatService:
                 detail=f"Error deleting chat session: {str(e)}"
             )
 
+    async def get_session_documents(self, session_id: str, user_id: str) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Get all documents for a chat session with their details.
+
+        Args:
+            session_id: ID of the session
+            user_id: ID of the user
+
+        Returns:
+            List of documents with their details
+        """
+        try:
+            documents = []
+
+            # Check if session exists and belongs to user
+            if self.supabase:
+                # Try using service role key first to avoid RLS issues
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        logger.info(f"Checking session using service role for user ID: {user_id}")
+                        service_supabase = create_client(
+                            supabase_url=settings.SUPABASE_URL,
+                            supabase_key=settings.SUPABASE_SERVICE_KEY
+                        )
+                        session_response = service_supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                        logger.info(f"Session checked successfully using service role")
+                    except Exception as service_error:
+                        logger.error(f"Error checking session using service role: {str(service_error)}")
+                        # Fall back to regular key
+                        logger.info(f"Falling back to regular key for checking session")
+                        session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                else:
+                    # No service key available, use regular key
+                    session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+
+                if not session_response.data:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Chat session with ID {session_id} not found or does not belong to user"
+                    )
+
+                # Get document IDs for this session
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        doc_response = service_supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+                    except Exception:
+                        doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+                else:
+                    doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+
+                document_ids = [doc["document_id"] for doc in doc_response.data]
+
+                # Get document details for each document ID
+                for doc_id in document_ids:
+                    if settings.SUPABASE_SERVICE_KEY:
+                        try:
+                            doc_details_response = service_supabase.table("documents").select("*").eq("id", doc_id).execute()
+                        except Exception:
+                            doc_details_response = self.supabase.table("documents").select("*").eq("id", doc_id).execute()
+                    else:
+                        doc_details_response = self.supabase.table("documents").select("*").eq("id", doc_id).execute()
+
+                    if doc_details_response.data:
+                        doc_details = doc_details_response.data[0]
+
+                        # Generate presigned URL for S3 documents if available
+                        document_url = None
+                        if "s3_key" in doc_details and doc_details["s3_key"] and s3_storage.is_available():
+                            document_url = s3_storage.generate_presigned_url(doc_details["s3_key"])
+
+                        documents.append({
+                            "id": doc_details["id"],
+                            "file_id": doc_details["id"],
+                            "file_name": doc_details["file_name"],
+                            "file_type": doc_details["file_type"],
+                            "file_size": doc_details.get("file_size", 0),
+                            "status": doc_details["status"],
+                            "created_at": doc_details["created_at"],
+                            "s3_key": doc_details.get("s3_key"),
+                            "url": document_url
+                        })
+
+            return {"documents": documents}
+
+        except HTTPException as e:
+            raise e
+        except Exception as e:
+            logger.error(f"Error getting documents for chat session: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error getting documents for chat session: {str(e)}"
+            )
+
+    async def get_session(self, session_id: str, user_id: str) -> Dict[str, Any]:
+        """
+        Get a chat session by ID.
+
+        Args:
+            session_id: ID of the session
+            user_id: ID of the user
+
+        Returns:
+            Session information
+        """
+        try:
+            # Check if session exists and belongs to user
+            if self.supabase:
+                # Try using service role key first to avoid RLS issues
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        logger.info(f"Getting session using service role for user ID: {user_id}")
+                        service_supabase = create_client(
+                            supabase_url=settings.SUPABASE_URL,
+                            supabase_key=settings.SUPABASE_SERVICE_KEY
+                        )
+                        session_response = service_supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                        logger.info(f"Session retrieved successfully using service role")
+                    except Exception as service_error:
+                        logger.error(f"Error getting session using service role: {str(service_error)}")
+                        # Fall back to regular key
+                        logger.info(f"Falling back to regular key for getting session")
+                        session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                else:
+                    # No service key available, use regular key
+                    session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+
+                if not session_response.data:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Chat session with ID {session_id} not found or does not belong to user"
+                    )
+
+                session = session_response.data[0]
+
+                # Get document IDs for this session
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        doc_response = service_supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+                    except Exception:
+                        doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+                else:
+                    doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+
+                document_ids = [doc["document_id"] for doc in doc_response.data]
+
+                return {
+                    "session_id": session["id"],
+                    "name": session["name"],
+                    "user_id": session["user_id"],
+                    "created_at": session["created_at"],
+                    "updated_at": session["updated_at"],
+                    "last_message_at": session["last_message_at"],
+                    "document_ids": document_ids
+                }
+
+            raise HTTPException(
+                status_code=500,
+                detail="Database connection not available"
+            )
+
+        except HTTPException as e:
+            raise e
+        except Exception as e:
+            logger.error(f"Error getting chat session: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error getting chat session: {str(e)}"
+            )
+
     async def get_messages(self, session_id: str, user_id: str) -> Dict[str, List[Dict[str, Any]]]:
         """
         Get all messages for a chat session.
@@ -714,16 +920,52 @@ class ChatService:
         try:
             # Check if session exists and belongs to user
             if self.supabase:
-                session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                # Try using service role key first to avoid RLS issues
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        logger.info(f"Checking session using service role for user ID: {user_id}")
+                        service_supabase = create_client(
+                            supabase_url=settings.SUPABASE_URL,
+                            supabase_key=settings.SUPABASE_SERVICE_KEY
+                        )
+                        session_response = service_supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                        logger.info(f"Session checked successfully using service role")
 
-                if not session_response.data:
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"Chat session with ID {session_id} not found or does not belong to user"
-                    )
+                        if not session_response.data:
+                            raise HTTPException(
+                                status_code=404,
+                                detail=f"Chat session with ID {session_id} not found or does not belong to user"
+                            )
 
-                # Get messages
-                message_response = self.supabase.table("chat_messages").select("*").eq("session_id", session_id).order("timestamp").execute()
+                        # Get messages using service role
+                        message_response = service_supabase.table("chat_messages").select("*").eq("session_id", session_id).order("timestamp").execute()
+                        logger.info(f"Messages retrieved successfully using service role")
+                    except Exception as service_error:
+                        logger.error(f"Error using service role: {str(service_error)}")
+                        # Fall back to regular key
+                        logger.info(f"Falling back to regular key for session and messages")
+                        session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+
+                        if not session_response.data:
+                            raise HTTPException(
+                                status_code=404,
+                                detail=f"Chat session with ID {session_id} not found or does not belong to user"
+                            )
+
+                        # Get messages with regular key
+                        message_response = self.supabase.table("chat_messages").select("*").eq("session_id", session_id).order("timestamp").execute()
+                else:
+                    # No service key available, use regular key
+                    session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+
+                    if not session_response.data:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=f"Chat session with ID {session_id} not found or does not belong to user"
+                        )
+
+                    # Get messages
+                    message_response = self.supabase.table("chat_messages").select("*").eq("session_id", session_id).order("timestamp").execute()
 
                 messages = []
                 for msg in message_response.data:
@@ -770,20 +1012,65 @@ class ChatService:
         try:
             # Check if session exists and belongs to user
             if self.supabase:
-                session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                # Try using service role key first to avoid RLS issues
+                service_supabase = None
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        logger.info(f"Checking session using service role for user ID: {user_id}")
+                        service_supabase = create_client(
+                            supabase_url=settings.SUPABASE_URL,
+                            supabase_key=settings.SUPABASE_SERVICE_KEY
+                        )
+                        session_response = service_supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+                        logger.info(f"Session checked successfully using service role")
 
-                if not session_response.data:
-                    raise HTTPException(
-                        status_code=404,
-                        detail=f"Chat session with ID {session_id} not found or does not belong to user"
-                    )
+                        if not session_response.data:
+                            raise HTTPException(
+                                status_code=404,
+                                detail=f"Chat session with ID {session_id} not found or does not belong to user"
+                            )
 
-                # Get associated documents
-                doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
-                document_ids = [doc["document_id"] for doc in doc_response.data]
+                        # Get associated documents using service role
+                        doc_response = service_supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+                        document_ids = [doc["document_id"] for doc in doc_response.data]
 
-                # Get chat history
-                message_response = self.supabase.table("chat_messages").select("*").eq("session_id", session_id).order("timestamp").execute()
+                        # Get chat history using service role
+                        message_response = service_supabase.table("chat_messages").select("*").eq("session_id", session_id).order("timestamp").execute()
+                    except Exception as service_error:
+                        logger.error(f"Error using service role: {str(service_error)}")
+                        service_supabase = None
+                        # Fall back to regular key
+                        logger.info(f"Falling back to regular key for session and messages")
+                        session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+
+                        if not session_response.data:
+                            raise HTTPException(
+                                status_code=404,
+                                detail=f"Chat session with ID {session_id} not found or does not belong to user"
+                            )
+
+                        # Get associated documents with regular key
+                        doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+                        document_ids = [doc["document_id"] for doc in doc_response.data]
+
+                        # Get chat history with regular key
+                        message_response = self.supabase.table("chat_messages").select("*").eq("session_id", session_id).order("timestamp").execute()
+                else:
+                    # No service key available, use regular key
+                    session_response = self.supabase.table("chat_sessions").select("*").eq("id", session_id).eq("user_id", user_id).execute()
+
+                    if not session_response.data:
+                        raise HTTPException(
+                            status_code=404,
+                            detail=f"Chat session with ID {session_id} not found or does not belong to user"
+                        )
+
+                    # Get associated documents
+                    doc_response = self.supabase.table("session_documents").select("document_id").eq("session_id", session_id).execute()
+                    document_ids = [doc["document_id"] for doc in doc_response.data]
+
+                    # Get chat history
+                    message_response = self.supabase.table("chat_messages").select("*").eq("session_id", session_id).order("timestamp").execute()
 
                 chat_history = []
                 for msg in message_response.data:
@@ -803,13 +1090,23 @@ class ChatService:
                     "metadata": {}
                 }
 
-                self.supabase.table("chat_messages").insert(user_message_data).execute()
+                # Use service role if available
+                if service_supabase:
+                    service_supabase.table("chat_messages").insert(user_message_data).execute()
 
-                # Update session last message time
-                self.supabase.table("chat_sessions").update({
-                    "last_message_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat()
-                }).eq("id", session_id).execute()
+                    # Update session last message time
+                    service_supabase.table("chat_sessions").update({
+                        "last_message_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat()
+                    }).eq("id", session_id).execute()
+                else:
+                    self.supabase.table("chat_messages").insert(user_message_data).execute()
+
+                    # Update session last message time
+                    self.supabase.table("chat_sessions").update({
+                        "last_message_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat()
+                    }).eq("id", session_id).execute()
 
             # Process the message
             if use_agent:
@@ -842,13 +1139,23 @@ class ChatService:
                     }
                 }
 
-                self.supabase.table("chat_messages").insert(assistant_message_data).execute()
+                # Use service role if available
+                if service_supabase:
+                    service_supabase.table("chat_messages").insert(assistant_message_data).execute()
 
-                # Update session last message time
-                self.supabase.table("chat_sessions").update({
-                    "last_message_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat()
-                }).eq("id", session_id).execute()
+                    # Update session last message time
+                    service_supabase.table("chat_sessions").update({
+                        "last_message_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat()
+                    }).eq("id", session_id).execute()
+                else:
+                    self.supabase.table("chat_messages").insert(assistant_message_data).execute()
+
+                    # Update session last message time
+                    self.supabase.table("chat_sessions").update({
+                        "last_message_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat()
+                    }).eq("id", session_id).execute()
 
             return response
 

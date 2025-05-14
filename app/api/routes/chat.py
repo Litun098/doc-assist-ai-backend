@@ -8,6 +8,7 @@ from datetime import datetime
 
 from app.services.chat_service import chat_service
 from app.services.auth_service import auth_service
+from app.services.suggestion_service import suggestion_service
 
 router = APIRouter()
 
@@ -58,6 +59,10 @@ class MessageListResponse(BaseModel):
     """Response model for listing messages."""
     messages: List[Dict[str, Any]]
 
+class DocumentListResponse(BaseModel):
+    """Response model for listing documents in a session."""
+    documents: List[Dict[str, Any]]
+
 class DeleteResponse(BaseModel):
     """Response model for delete operations."""
     session_id: str
@@ -82,9 +87,16 @@ class RemoveDocumentResponse(BaseModel):
     removed_document_id: str
     updated_at: str
 
+<<<<<<< HEAD
 class SessionDocumentsResponse(BaseModel):
     """Response model for getting documents in a session."""
     document_ids: List[str]
+=======
+class SuggestionResponse(BaseModel):
+    """Response model for query suggestions."""
+    session_id: str
+    suggestions: List[str]
+>>>>>>> feature-session-management
 
 @router.post("/sessions", response_model=SessionResponse)
 async def create_session(
@@ -183,6 +195,23 @@ async def delete_session(
     """
     return await chat_service.delete_session(session_id, current_user["id"])
 
+@router.get("/sessions/{session_id}/documents", response_model=DocumentListResponse)
+async def get_session_documents(
+    session_id: str,
+    current_user = Depends(auth_service.get_current_user)
+):
+    """
+    Get all documents for a chat session with their details.
+
+    Args:
+        session_id: ID of the session
+        current_user: Current authenticated user
+
+    Returns:
+        DocumentListResponse with list of documents and their details
+    """
+    return await chat_service.get_session_documents(session_id, current_user["id"])
+
 @router.get("/sessions/{session_id}/messages", response_model=MessageListResponse)
 async def get_messages(
     session_id: str,
@@ -223,6 +252,41 @@ async def send_message(
         message=request.message,
         use_agent=request.use_agent
     )
+
+@router.get("/sessions/{session_id}/suggestions", response_model=SuggestionResponse)
+async def get_suggestions(
+    session_id: str,
+    current_user = Depends(auth_service.get_current_user)
+):
+    """
+    Get suggested queries for a chat session based on the documents.
+
+    Args:
+        session_id: ID of the session
+        current_user: Current authenticated user
+
+    Returns:
+        SuggestionResponse with list of suggested queries
+    """
+    # Verify session belongs to user
+    session = await chat_service.get_session(session_id, current_user["id"])
+
+    # Get document IDs from session
+    document_ids = []
+    if "document_ids" in session:
+        document_ids = session["document_ids"]
+
+    # Generate suggestions
+    suggestions = await suggestion_service.generate_suggestions(
+        session_id=session_id,
+        user_id=current_user["id"],
+        document_ids=document_ids
+    )
+
+    return {
+        "session_id": session_id,
+        "suggestions": suggestions
+    }
 
 # Legacy endpoints for backward compatibility
 

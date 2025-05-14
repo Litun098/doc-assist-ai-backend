@@ -456,6 +456,100 @@ class LlamaIndexService:
 
         return chunks
 
+    async def get_document_chunks(self, file_id: str, user_id: str, limit: int = 3) -> Dict[str, Any]:
+        """
+        Get representative chunks from a document.
+
+        Args:
+            file_id: ID of the file to get chunks from
+            user_id: ID of the user who owns the file
+            limit: Maximum number of chunks to return
+
+        Returns:
+            Dict containing document chunks
+        """
+        try:
+            if not self.vector_store:
+                raise HTTPException(status_code=500, detail="Vector store not configured")
+
+            # Create a filter for the specified file ID and user ID
+            filter_dict = {
+                "operator": "And",
+                "operands": [
+                    {
+                        "path": ["file_id"],
+                        "operator": "Equal",
+                        "valueString": file_id
+                    },
+                    {
+                        "path": ["user_id"],
+                        "operator": "Equal",
+                        "valueString": user_id
+                    }
+                ]
+            }
+
+            # Get chunks from the vector store
+            try:
+                # Try using the v4 API first
+                collection = self.weaviate_client.collections.get(settings.LLAMAINDEX_INDEX_NAME)
+
+                # Query for chunks
+                results = collection.query.fetch_objects(
+                    limit=limit,
+                    filters=filter_dict,
+                    include_vector=False
+                )
+
+                # Extract chunks
+                chunks = []
+                for obj in results.objects:
+                    chunks.append({
+                        "content": obj.properties.get("content", ""),
+                        "file_id": obj.properties.get("file_id", ""),
+                        "page_number": obj.properties.get("page_number", 0),
+                        "chunk_index": obj.properties.get("chunk_index", 0),
+                        "heading": obj.properties.get("heading", ""),
+                        "metadata": obj.properties.get("metadata", {})
+                    })
+            except (AttributeError, Exception) as e:
+                logger.error(f"Error using v4 API to get chunks: {str(e)}")
+                # Fall back to a simpler approach - get nodes from the retriever
+                retriever = self.vector_store.as_retriever(
+                    similarity_top_k=limit,
+                    filters=filter_dict
+                )
+
+                # Use a generic query to get some representative chunks
+                nodes = retriever.retrieve("summary of this document")
+
+                # Extract chunks
+                chunks = []
+                for node in nodes:
+                    chunks.append({
+                        "content": node.text,
+                        "file_id": node.metadata.get("file_id", ""),
+                        "page_number": node.metadata.get("page_number", 0),
+                        "chunk_index": node.metadata.get("chunk_index", 0),
+                        "heading": node.metadata.get("heading", ""),
+                        "metadata": node.metadata
+                    })
+
+            return {
+                "file_id": file_id,
+                "user_id": user_id,
+                "chunks": chunks
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting document chunks: {str(e)}")
+            return {
+                "file_id": file_id,
+                "user_id": user_id,
+                "chunks": [],
+                "error": str(e)
+            }
+
     async def query_documents(self, query: str, file_ids: List[str], user_id: str,
                              top_k: int = 5) -> Dict[str, Any]:
         """
