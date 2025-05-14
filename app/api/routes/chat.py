@@ -87,16 +87,14 @@ class RemoveDocumentResponse(BaseModel):
     removed_document_id: str
     updated_at: str
 
-<<<<<<< HEAD
 class SessionDocumentsResponse(BaseModel):
     """Response model for getting documents in a session."""
     document_ids: List[str]
-=======
+
 class SuggestionResponse(BaseModel):
     """Response model for query suggestions."""
     session_id: str
     suggestions: List[str]
->>>>>>> feature-session-management
 
 @router.post("/sessions", response_model=SessionResponse)
 async def create_session(
@@ -195,8 +193,8 @@ async def delete_session(
     """
     return await chat_service.delete_session(session_id, current_user["id"])
 
-@router.get("/sessions/{session_id}/documents", response_model=DocumentListResponse)
-async def get_session_documents(
+@router.get("/sessions/{session_id}/documents/details", response_model=DocumentListResponse)
+async def get_session_document_details(
     session_id: str,
     current_user = Depends(auth_service.get_current_user)
 ):

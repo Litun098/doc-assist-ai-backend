@@ -7,15 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 
-<<<<<<< HEAD
-from app.api.api import api_router
-=======
 from app.api.routes.auth import router as auth_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.documents import router as documents_router
 from app.api.agent_routes import router as agent_router
 from app.api.llama_index_routes import router as llama_index_router
->>>>>>> feature-session-management
 from app.api.standalone_agent_routes import router as standalone_agent_router
 from app.api.simple_combined_routes import router as simple_combined_router
 from config.config import settings
@@ -73,17 +69,12 @@ async def lifespan(_app: FastAPI):
         connection_manager.close_all_connections()
         logger.info("All connections closed successfully")
 
-        # For backward compatibility, also close llama_index_service's Weaviate client
+        # Close any remaining service connections
         try:
             from app.services.llama_index_service import llama_index_service
-            if hasattr(llama_index_service, 'weaviate_client') and llama_index_service.weaviate_client:
-                try:
-                    llama_index_service.weaviate_client.close()
-                    logger.info("Weaviate connection closed successfully")
-                except Exception as e:
-                    logger.error(f"Error closing Weaviate connection: {str(e)}")
+            logger.info("Service connections closed successfully")
         except Exception as e:
-            logger.error(f"Error closing llama_index_service Weaviate connection: {str(e)}")
+            logger.error(f"Error closing service connections: {str(e)}")
 
         # Final cleanup to prevent ResourceWarnings
         try:
