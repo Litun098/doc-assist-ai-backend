@@ -55,7 +55,11 @@ class RAGService:
                     auth_credentials=Auth.api_key(settings.WEAVIATE_API_KEY),
                     skip_init_checks=True,  # Skip initialization checks
                     additional_config=AdditionalConfig(
-                        timeout=Timeout(init=60)  # Increase timeout to 60 seconds
+                        timeout=Timeout(
+                            init=settings.WEAVIATE_BATCH_TIMEOUT,  # Increase timeout for initialization
+                            query=settings.WEAVIATE_BATCH_TIMEOUT,  # Increase timeout for queries
+                            batch=settings.WEAVIATE_BATCH_TIMEOUT   # Increase timeout for batch operations
+                        )
                     )
                 )
                 self.use_weaviate = True
@@ -90,7 +94,11 @@ class RAGService:
         if self.use_weaviate and self.weaviate_client:
             # Use Weaviate vector store
             try:
-                index_name = f"{settings.LLAMAINDEX_INDEX_NAME}_{user_id}"
+                # Create a user-specific collection name
+                # Weaviate doesn't allow underscores in class names, so we'll replace them with hyphens
+                # Also, we'll use a shorter version of the user_id to avoid exceeding length limits
+                short_user_id = user_id.replace("-", "")[:8]
+                index_name = f"{settings.LLAMAINDEX_INDEX_NAME}{short_user_id}"
 
                 return WeaviateVectorStore(
                     weaviate_client=self.weaviate_client,

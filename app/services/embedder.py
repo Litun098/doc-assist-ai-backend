@@ -1,10 +1,15 @@
 from typing import List, Dict, Any
 import weaviate
+import time
+import logging
 from langchain_openai import OpenAIEmbeddings
 import uuid
 
 from app.models.db_models import Chunk
 from config.config import settings
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
@@ -13,6 +18,9 @@ class EmbeddingService:
             model=settings.EMBEDDING_MODEL,
             openai_api_key=settings.OPENAI_API_KEY
         )
+
+        # Default collection name (will be overridden for specific users)
+        self.collection_name = "DocumentChunk"
 
         # Initialize Weaviate client
         if settings.WEAVIATE_URL and settings.WEAVIATE_API_KEY:
@@ -24,13 +32,17 @@ class EmbeddingService:
                 if not weaviate_url.startswith("https://"):
                     weaviate_url = f"https://{weaviate_url}"
 
-                print(f"Connecting to Weaviate at {weaviate_url}")
+                logger.info(f"Connecting to Weaviate at {weaviate_url}")
                 self.weaviate_client = weaviate.connect_to_weaviate_cloud(
                     cluster_url=weaviate_url,
                     auth_credentials=Auth.api_key(settings.WEAVIATE_API_KEY),
                     skip_init_checks=True,  # Skip initialization checks
                     additional_config=AdditionalConfig(
-                        timeout=Timeout(init=60)  # Increase timeout to 60 seconds
+                        timeout=Timeout(
+                            init=settings.WEAVIATE_BATCH_TIMEOUT,  # Increase timeout for initialization
+                            query=settings.WEAVIATE_BATCH_TIMEOUT,  # Increase timeout for queries
+                            batch=settings.WEAVIATE_BATCH_TIMEOUT   # Increase timeout for batch operations
+                        )
                     )
                 )
             except (ImportError, AttributeError):
@@ -42,7 +54,26 @@ class EmbeddingService:
             self._ensure_schema()
         else:
             self.weaviate_client = None
-            print("Warning: Weaviate not configured. Using local embeddings only.")
+            logger.warning("Weaviate not configured. Using local embeddings only.")
+
+    def get_collection_name_for_user(self, user_id: str) -> str:
+        """
+        Get the collection name for a specific user.
+
+        Args:
+            user_id: The user ID
+
+        Returns:
+            The collection name for the user
+        """
+        if not user_id:
+            return self.collection_name
+
+        # Create a user-specific collection name
+        # Weaviate doesn't allow underscores in class names, so we'll replace them with hyphens
+        # Also, we'll use a shorter version of the user_id to avoid exceeding length limits
+        short_user_id = user_id.replace("-", "")[:8]
+        return f"{settings.LLAMAINDEX_INDEX_NAME}{short_user_id}"
 
     def _ensure_schema(self):
         """Ensure the Weaviate schema exists"""
@@ -65,15 +96,16 @@ class EmbeddingService:
                     elif isinstance(collection, dict) and 'name' in collection:
                         collection_names.append(collection['name'])
 
-                print(f"Found collections: {collection_names}")
+                logger.info(f"Found collections: {collection_names}")
 
                 # Create collection if it doesn't exist
-                if "DocumentChunk" not in collection_names:
-                    print("Creating DocumentChunk collection...")
+                # Use the configured index name
+                if settings.LLAMAINDEX_INDEX_NAME not in collection_names:
+                    logger.info(f"Creating {settings.LLAMAINDEX_INDEX_NAME} collection...")
                     try:
                         # Try v4 API
                         self.weaviate_client.collections.create(
-                            name="DocumentChunk",
+                            name=settings.LLAMAINDEX_INDEX_NAME,
                             description="A chunk of text from a document",
                             vectorizer_config=None,  # We'll provide our own vectors
                             properties=[
@@ -119,22 +151,22 @@ class EmbeddingService:
                                 }
                             ]
                         )
-                        print("DocumentChunk collection created successfully")
+                        logger.info("DocumentChunk collection created successfully")
                     except Exception as e:
-                        print(f"Error creating collection with v4 API: {str(e)}")
+                        logger.error(f"Error creating collection with v4 API: {str(e)}")
                         raise
             except AttributeError:
                 # Fall back to v3 API
-                print("Falling back to v3 API...")
+                logger.info("Falling back to v3 API...")
 
                 # Check if schema exists
                 schema = self.weaviate_client.schema.get()
                 classes = [c["class"] for c in schema["classes"]] if "classes" in schema else []
 
                 # Create schema if it doesn't exist
-                if "DocumentChunk" not in classes:
+                if settings.LLAMAINDEX_INDEX_NAME not in classes:
                     class_obj = {
-                        "class": "DocumentChunk",
+                        "class": settings.LLAMAINDEX_INDEX_NAME,
                         "description": "A chunk of text from a document",
                         "vectorizer": "none",  # We'll provide our own vectors
                         "properties": [
@@ -181,14 +213,22 @@ class EmbeddingService:
                         ]
                     }
                     self.weaviate_client.schema.create_class(class_obj)
-                    print("DocumentChunk class created successfully")
+                    logger.info("DocumentChunk class created successfully")
         except Exception as e:
-            print(f"Error ensuring schema: {str(e)}")
+            logger.error(f"Error ensuring schema: {str(e)}")
 
     def embed_chunks(self, chunks: List[Chunk]) -> Dict[str, str]:
         """Embed chunks and store them in Weaviate"""
         if not chunks:
             return {}
+
+        # Get the user ID from the first chunk (all chunks should have the same user ID)
+        user_id = None
+        if chunks and chunks[0].metadata and "user_id" in chunks[0].metadata:
+            user_id = chunks[0].metadata["user_id"]
+
+        # Get the collection name for this user
+        collection_name = self.get_collection_name_for_user(user_id)
 
         # Extract text from chunks
         texts = [chunk.content for chunk in chunks]
@@ -200,54 +240,104 @@ class EmbeddingService:
         chunk_embedding_ids = {}
 
         if self.weaviate_client:
-            for i, chunk in enumerate(chunks):
-                # Create a unique ID for the embedding
-                embedding_id = str(uuid.uuid4())
+            # Process chunks in batches to avoid timeouts
+            batch_size = settings.WEAVIATE_BATCH_SIZE
+            total_chunks = len(chunks)
+            num_batches = (total_chunks + batch_size - 1) // batch_size  # Ceiling division
 
-                try:
-                    # Try v4 API first
+            logger.info(f"Processing {total_chunks} chunks in {num_batches} batches (batch size: {batch_size})")
+
+            for batch_idx in range(num_batches):
+                start_idx = batch_idx * batch_size
+                end_idx = min(start_idx + batch_size, total_chunks)
+                batch_chunks = chunks[start_idx:end_idx]
+                batch_embeddings = embeddings[start_idx:end_idx]
+
+                logger.info(f"Processing batch {batch_idx + 1}/{num_batches} with {len(batch_chunks)} chunks")
+
+                # Process the batch with retries
+                retry_count = 0
+                max_retries = settings.WEAVIATE_MAX_RETRIES
+
+                while retry_count < max_retries:
                     try:
-                        # Get the collection
-                        collection = self.weaviate_client.collections.get("DocumentChunk")
+                        # Try v4 API first
+                        try:
+                            # Get the collection
+                            collection = self.weaviate_client.collections.get(collection_name)
 
-                        # Store in Weaviate
-                        collection.data.insert(
-                            properties={
-                                "content": chunk.content,
-                                "file_id": chunk.file_id,
-                                "page_number": chunk.page_number,
-                                "chunk_index": chunk.chunk_index,
-                                "metadata": str(chunk.metadata)
-                            },
-                            uuid=embedding_id,
-                            vector=embeddings[i]
-                        )
-                    except AttributeError:
-                        # Fall back to v3 API
-                        self.weaviate_client.data_object.create(
-                            class_name="DocumentChunk",
-                            data_object={
-                                "content": chunk.content,
-                                "file_id": chunk.file_id,
-                                "page_number": chunk.page_number,
-                                "chunk_index": chunk.chunk_index,
-                                "metadata": str(chunk.metadata)
-                            },
-                            uuid=embedding_id,
-                            vector=embeddings[i]
-                        )
+                            # Process each chunk in the batch
+                            for i, chunk in enumerate(batch_chunks):
+                                # Create a unique ID for the embedding
+                                embedding_id = str(uuid.uuid4())
 
-                    chunk_embedding_ids[chunk.id] = embedding_id
-                except Exception as e:
-                    print(f"Error storing chunk in Weaviate: {str(e)}")
-                    # Continue with the next chunk
+                                # Store in Weaviate
+                                collection.data.insert(
+                                    properties={
+                                        "content": chunk.content,
+                                        "file_id": chunk.file_id,
+                                        "page_number": chunk.page_number,
+                                        "chunk_index": chunk.chunk_index,
+                                        "metadata": str(chunk.metadata)
+                                    },
+                                    uuid=embedding_id,
+                                    vector=batch_embeddings[i]
+                                )
+
+                                chunk_embedding_ids[chunk.id] = embedding_id
+
+                            # If we get here, the batch was successful
+                            logger.info(f"Successfully processed batch {batch_idx + 1}/{num_batches}")
+                            break
+
+                        except AttributeError:
+                            # Fall back to v3 API
+                            for i, chunk in enumerate(batch_chunks):
+                                # Create a unique ID for the embedding
+                                embedding_id = str(uuid.uuid4())
+
+                                # Store in Weaviate
+                                self.weaviate_client.data_object.create(
+                                    class_name=collection_name,
+                                    data_object={
+                                        "content": chunk.content,
+                                        "file_id": chunk.file_id,
+                                        "page_number": chunk.page_number,
+                                        "chunk_index": chunk.chunk_index,
+                                        "metadata": str(chunk.metadata)
+                                    },
+                                    uuid=embedding_id,
+                                    vector=batch_embeddings[i]
+                                )
+
+                                chunk_embedding_ids[chunk.id] = embedding_id
+
+                            # If we get here, the batch was successful
+                            logger.info(f"Successfully processed batch {batch_idx + 1}/{num_batches} using v3 API")
+                            break
+
+                    except Exception as e:
+                        retry_count += 1
+                        logger.warning(f"Batch {batch_idx + 1} attempt {retry_count} failed: {str(e)}")
+
+                        if retry_count < max_retries:
+                            logger.info(f"Retrying batch {batch_idx + 1} (attempt {retry_count + 1}/{max_retries})...")
+                            # Wait before retrying with exponential backoff
+                            time.sleep(2 ** retry_count)
+                        else:
+                            logger.error(f"Failed to process batch {batch_idx + 1} after {max_retries} attempts")
+                            # Continue with next batch instead of failing the entire process
+                            break
 
         return chunk_embedding_ids
 
-    def search_similar_chunks(self, query: str, file_ids: List[str] = None, limit: int = 5) -> List[Dict[str, Any]]:
+    def search_similar_chunks(self, query: str, file_ids: List[str] = None, user_id: str = None, limit: int = 5) -> List[Dict[str, Any]]:
         """Search for chunks similar to the query"""
         if not self.weaviate_client:
             return []
+
+        # Get the collection name for this user
+        collection_name = self.get_collection_name_for_user(user_id)
 
         # Generate query embedding
         query_embedding = self.embeddings.embed_query(query)
@@ -256,7 +346,7 @@ class EmbeddingService:
             # Try v4 API first
             try:
                 # Get the collection
-                collection = self.weaviate_client.collections.get("DocumentChunk")
+                collection = self.weaviate_client.collections.get(collection_name)
 
                 # Build query
                 query_obj = collection.query.near_vector(
@@ -290,7 +380,7 @@ class EmbeddingService:
                 # Build Weaviate query
                 query_builder = (
                     self.weaviate_client.query
-                    .get("DocumentChunk", ["content", "file_id", "page_number", "chunk_index", "metadata"])
+                    .get(collection_name, ["content", "file_id", "page_number", "chunk_index", "metadata"])
                     .with_near_vector({"vector": query_embedding})
                     .with_limit(limit)
                 )
@@ -307,10 +397,17 @@ class EmbeddingService:
 
                 # Extract results
                 chunks = []
-                if "data" in result and "Get" in result["data"] and "DocumentChunk" in result["data"]["Get"]:
-                    chunks = result["data"]["Get"]["DocumentChunk"]
+                if "data" in result and "Get" in result["data"] and collection_name in result["data"]["Get"]:
+                    chunks = result["data"]["Get"][collection_name]
 
                 return chunks
         except Exception as e:
-            print(f"Error searching similar chunks: {str(e)}")
+            logger.error(f"Error searching similar chunks: {str(e)}")
             return []
+
+
+# Create a singleton instance
+embedder_service = EmbeddingService()
+
+# Create an alias for backward compatibility
+embedder = embedder_service

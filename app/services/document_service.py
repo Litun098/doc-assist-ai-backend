@@ -498,6 +498,51 @@ class DocumentService:
             user_id: ID of the user
             storage_type: Type of storage ('s3' or 'local')
         """
+        # For large documents, use Celery task instead of processing directly
+        # This helps prevent timeouts and memory issues
+        file_size = 0
+        file_ext = ""
+
+        # Get file size and type
+        if storage_type == "local" and os.path.exists(file_url):
+            file_size = os.path.getsize(file_url)
+            file_ext = os.path.splitext(file_url)[1].lstrip('.')
+        elif storage_type == "s3":
+            # For S3, we need to get the file info from Supabase
+            if self.supabase:
+                try:
+                    # Try using service role key first to avoid RLS issues
+                    if settings.SUPABASE_SERVICE_KEY:
+                        try:
+                            logger.info(f"Getting document info using service role for file ID: {file_id}")
+                            service_supabase = create_client(
+                                supabase_url=settings.SUPABASE_URL,
+                                supabase_key=settings.SUPABASE_SERVICE_KEY
+                            )
+                            response = service_supabase.table("documents").select("*").eq("id", file_id).execute()
+                            if response.data:
+                                file_size = response.data[0].get("file_size", 0)
+                                file_ext = response.data[0].get("file_type", "")
+                        except Exception as e:
+                            logger.error(f"Error getting document info using service role: {str(e)}")
+                except Exception as e:
+                    logger.error(f"Error getting document info: {str(e)}")
+
+        # Use Celery for large files (> 5MB) or if file size is unknown
+        large_file_threshold = 5 * 1024 * 1024  # 5MB
+        if file_size > large_file_threshold or file_size == 0:
+            logger.info(f"Using Celery task for large document processing: {file_id} ({file_size} bytes)")
+            # Import here to avoid circular imports
+            from app.workers.llama_index_tasks import process_file_with_llama_index
+
+            # Start Celery task
+            process_file_with_llama_index.delay(
+                file_id=file_id,
+                user_id=user_id,
+                file_path=file_url,
+                file_type=file_ext
+            )
+            return
         try:
             # Process the document
             result = document_processor.process_document(

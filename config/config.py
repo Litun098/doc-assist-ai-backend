@@ -92,6 +92,12 @@ class Settings:
     LLAMAINDEX_CHUNK_SIZE = 1000
     LLAMAINDEX_CHUNK_OVERLAP = 200
     LLAMAINDEX_SIMILARITY_TOP_K = 5  # Number of chunks to retrieve for each query
-    LLAMAINDEX_INDEX_NAME = "DocumentChunks"  # Name of the index in Weaviate
+    LLAMAINDEX_INDEX_NAME = "DocumentChunks"  # Base name of the index in Weaviate (user ID will be appended)
+
+    # Weaviate batch processing settings
+    WEAVIATE_BATCH_SIZE = 50  # Maximum number of objects to send in a single batch
+    WEAVIATE_BATCH_TIMEOUT = 120  # Timeout in seconds for batch operations
+    WEAVIATE_BATCH_NUM_WORKERS = 1  # Number of workers for batch processing
+    WEAVIATE_MAX_RETRIES = 5  # Maximum number of retries for failed operations
 
 settings = Settings()

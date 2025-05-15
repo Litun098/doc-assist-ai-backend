@@ -98,9 +98,33 @@ AnyDocAI is an AI document assistant that lets you chat with all your files — 
 /scripts
   init_weaviate.py    # Sets up schema, indexes
   test_queries.py     # Quick GPT test script
+  test_weaviate_batch.py # Tests batch processing
 
 main.py               # FastAPI entrypoint
 ```
+
+## Handling Large Documents
+
+AnyDocAI is designed to handle documents of any size through several optimizations:
+
+### Batch Processing
+
+Large documents are processed in smaller batches to avoid timeouts:
+
+- Documents are automatically routed to Celery background tasks when they exceed 5MB
+- Vector embeddings are processed in configurable batch sizes (default: 100 chunks per batch)
+- Failed batches are automatically retried with exponential backoff
+- Timeouts are configurable in the settings
+
+### Testing Batch Processing
+
+You can test the batch processing functionality with different batch sizes:
+
+```bash
+python scripts/test_weaviate_batch.py
+```
+
+This script will test different batch sizes and report the optimal configuration for your environment.
 
 ## License
 

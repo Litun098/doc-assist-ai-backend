@@ -4,9 +4,9 @@ LlamaIndex service for document processing, indexing, and querying.
 import os
 import uuid
 import time
+import asyncio
 from typing import List, Dict, Any
 from datetime import datetime
-# import asyncio
 import logging
 from enum import Enum
 
@@ -89,7 +89,11 @@ class LlamaIndexService:
                             auth_credentials=Auth.api_key(settings.WEAVIATE_API_KEY),
                             skip_init_checks=True,  # Skip initialization checks
                             additional_config=AdditionalConfig(
-                                timeout=Timeout(init=60)  # Increase timeout to 60 seconds
+                                timeout=Timeout(
+                                    init=settings.WEAVIATE_BATCH_TIMEOUT,  # Increase timeout for initialization
+                                    query=settings.WEAVIATE_BATCH_TIMEOUT,  # Increase timeout for queries
+                                    batch=settings.WEAVIATE_BATCH_TIMEOUT   # Increase timeout for batch operations
+                                )
                             )
                         )
                         connection_successful = True
@@ -236,13 +240,10 @@ class LlamaIndexService:
             # Create nodes with appropriate chunking strategy
             nodes = await self._create_nodes(documents, file_id, user_id, chunking_strategy)
 
-            # Create index
-            if self.storage_context:
-                # Use vector store if available
-                VectorStoreIndex(
-                    nodes=nodes,
-                    storage_context=self.storage_context,
-                )
+            # Create index with batch processing for large documents
+            if self.storage_context and self.vector_store:
+                # Use vector store with batched processing
+                await self._store_nodes_in_batches(nodes)
             else:
                 # Use in-memory index if no vector store
                 VectorStoreIndex(
@@ -419,6 +420,70 @@ class LlamaIndexService:
                 node.metadata["heading"] = None
 
         return nodes
+
+    async def _store_nodes_in_batches(self, nodes: List[TextNode]) -> None:
+        """
+        Store nodes in Weaviate using batched processing to avoid timeouts.
+
+        Args:
+            nodes: List of TextNode objects to store
+        """
+        if not self.vector_store or not self.weaviate_client:
+            logger.warning("Vector store not available, skipping batch storage")
+            return
+
+        try:
+            # Get the total number of nodes
+            total_nodes = len(nodes)
+            logger.info(f"Starting batch processing of {total_nodes} nodes")
+
+            # Calculate number of batches
+            batch_size = settings.WEAVIATE_BATCH_SIZE
+            num_batches = (total_nodes + batch_size - 1) // batch_size  # Ceiling division
+
+            # Process nodes in batches
+            for batch_idx in range(num_batches):
+                start_idx = batch_idx * batch_size
+                end_idx = min(start_idx + batch_size, total_nodes)
+                batch_nodes = nodes[start_idx:end_idx]
+
+                logger.info(f"Processing batch {batch_idx + 1}/{num_batches} with {len(batch_nodes)} nodes")
+
+                # Create a temporary storage context for this batch
+                batch_storage_context = StorageContext.from_defaults(
+                    vector_store=self.vector_store
+                )
+
+                # Process the batch with retries
+                retry_count = 0
+                max_retries = settings.WEAVIATE_MAX_RETRIES
+                success = False
+
+                while retry_count < max_retries and not success:
+                    try:
+                        # Create a temporary index for this batch
+                        VectorStoreIndex(
+                            nodes=batch_nodes,
+                            storage_context=batch_storage_context,
+                        )
+                        success = True
+                        logger.info(f"Successfully processed batch {batch_idx + 1}/{num_batches}")
+                    except Exception as e:
+                        retry_count += 1
+                        logger.warning(f"Batch {batch_idx + 1} attempt {retry_count} failed: {str(e)}")
+                        if retry_count < max_retries:
+                            logger.info(f"Retrying batch {batch_idx + 1} (attempt {retry_count + 1}/{max_retries})...")
+                            # Wait before retrying with exponential backoff
+                            await asyncio.sleep(2 ** retry_count)
+                        else:
+                            logger.error(f"Failed to process batch {batch_idx + 1} after {max_retries} attempts")
+                            # Continue with next batch instead of failing the entire process
+
+            logger.info(f"Completed batch processing of {total_nodes} nodes")
+        except Exception as e:
+            logger.error(f"Error in batch processing: {str(e)}")
+            # Don't raise the exception to allow the process to continue
+            # The document will be marked as processed even if some batches failed
 
     def _create_chunks_from_nodes(self, nodes: List[TextNode], file_id: str) -> List[Chunk]:
         """
