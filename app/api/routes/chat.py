@@ -27,7 +27,7 @@ class ChatRequest(BaseModel):
 class SessionRequest(BaseModel):
     """Request model for creating a chat session."""
     name: str
-    document_ids: Optional[List[str]] = Field(default=None, description="Optional list of document IDs to associate with the session")
+    document_ids: Optional[List[str]] = Field(default_factory=list, description="Optional list of document IDs to associate with the session")
 
 class SessionUpdateRequest(BaseModel):
     """Request model for updating a chat session."""

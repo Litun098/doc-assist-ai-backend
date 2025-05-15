@@ -83,13 +83,29 @@ class ChatService:
                         logger.info(f"Chat session created successfully using service role for user ID: {user_id}")
 
                         # Associate documents with session using service role (if any)
-                        if document_ids:
+                        if document_ids and isinstance(document_ids, list) and len(document_ids) > 0:
+                            # Validate document IDs to ensure they're valid UUIDs
+                            valid_doc_ids = []
                             for doc_id in document_ids:
-                                service_supabase.table("session_documents").insert({
-                                    "session_id": session_id,
-                                    "document_id": doc_id
-                                }).execute()
-                            logger.info(f"Documents associated with session successfully using service role")
+                                try:
+                                    # Validate UUID format
+                                    uuid_obj = uuid.UUID(doc_id)
+                                    valid_doc_ids.append(str(uuid_obj))
+                                except (ValueError, TypeError):
+                                    logger.warning(f"Invalid document ID format: {doc_id}, skipping")
+
+                            # Insert valid document associations
+                            for doc_id in valid_doc_ids:
+                                try:
+                                    service_supabase.table("session_documents").insert({
+                                        "session_id": session_id,
+                                        "document_id": doc_id
+                                    }).execute()
+                                except Exception as doc_error:
+                                    logger.error(f"Error associating document {doc_id} with session: {str(doc_error)}")
+
+                            if valid_doc_ids:
+                                logger.info(f"Documents associated with session successfully using service role")
                     except Exception as service_error:
                         logger.error(f"Error creating chat session using service role: {str(service_error)}")
                         # Fall back to regular key
@@ -98,24 +114,54 @@ class ChatService:
                         logger.info(f"Chat session created successfully for user ID: {user_id}")
 
                         # Associate documents with session (if any)
-                        if document_ids:
+                        if document_ids and isinstance(document_ids, list) and len(document_ids) > 0:
+                            # Validate document IDs to ensure they're valid UUIDs
+                            valid_doc_ids = []
                             for doc_id in document_ids:
-                                self.supabase.table("session_documents").insert({
-                                    "session_id": session_id,
-                                    "document_id": doc_id
-                                }).execute()
-                            logger.info(f"Documents associated with session successfully")
+                                try:
+                                    # Validate UUID format
+                                    uuid_obj = uuid.UUID(doc_id)
+                                    valid_doc_ids.append(str(uuid_obj))
+                                except (ValueError, TypeError):
+                                    logger.warning(f"Invalid document ID format: {doc_id}, skipping")
+
+                            # Insert valid document associations
+                            for doc_id in valid_doc_ids:
+                                try:
+                                    self.supabase.table("session_documents").insert({
+                                        "session_id": session_id,
+                                        "document_id": doc_id
+                                    }).execute()
+                                except Exception as doc_error:
+                                    logger.error(f"Error associating document {doc_id} with session: {str(doc_error)}")
+
+                            if valid_doc_ids:
+                                logger.info(f"Documents associated with session successfully")
                 else:
                     # No service key available, use regular key
                     self.supabase.table("chat_sessions").insert(session_data).execute()
 
                     # Associate documents with session (if any)
-                    if document_ids:
+                    if document_ids and isinstance(document_ids, list) and len(document_ids) > 0:
+                        # Validate document IDs to ensure they're valid UUIDs
+                        valid_doc_ids = []
                         for doc_id in document_ids:
-                            self.supabase.table("session_documents").insert({
-                                "session_id": session_id,
-                                "document_id": doc_id
-                            }).execute()
+                            try:
+                                # Validate UUID format
+                                uuid_obj = uuid.UUID(doc_id)
+                                valid_doc_ids.append(str(uuid_obj))
+                            except (ValueError, TypeError):
+                                logger.warning(f"Invalid document ID format: {doc_id}, skipping")
+
+                        # Insert valid document associations
+                        for doc_id in valid_doc_ids:
+                            try:
+                                self.supabase.table("session_documents").insert({
+                                    "session_id": session_id,
+                                    "document_id": doc_id
+                                }).execute()
+                            except Exception as doc_error:
+                                logger.error(f"Error associating document {doc_id} with session: {str(doc_error)}")
 
             return {
                 "session_id": session_id,
@@ -1121,7 +1167,8 @@ class ChatService:
                     message=message,
                     user_id=user_id,
                     file_ids=document_ids,
-                    chat_history=chat_history
+                    chat_history=chat_history,
+                    session_id=session_id
                 )
 
             # Store assistant message

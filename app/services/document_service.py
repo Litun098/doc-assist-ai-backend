@@ -38,7 +38,7 @@ class DocumentService:
         """Initialize the document service."""
         self.supabase = supabase
 
-    async def upload_document(self, file: UploadFile, user_id: str, background_tasks: BackgroundTasks) -> Dict[str, Any]:
+    async def upload_document(self, file: UploadFile, user_id: str, background_tasks: BackgroundTasks, session_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Upload a document and start processing.
 
@@ -46,6 +46,7 @@ class DocumentService:
             file: The file to upload
             user_id: ID of the user
             background_tasks: FastAPI background tasks
+            session_id: Optional ID of the session to associate the document with
 
         Returns:
             Document information
@@ -137,15 +138,53 @@ class DocumentService:
                 file_url=file_url,
                 file_id=file_id,
                 user_id=user_id,
-                storage_type=storage_type
+                storage_type=storage_type,
+                session_id=session_id
             )
+
+            # If session_id is provided, associate document with the session
+            if session_id and self.supabase:
+                try:
+                    # Try using service role key first to avoid RLS issues
+                    if settings.SUPABASE_SERVICE_KEY:
+                        try:
+                            logger.info(f"Associating document with session using service role")
+                            service_supabase = create_client(
+                                supabase_url=settings.SUPABASE_URL,
+                                supabase_key=settings.SUPABASE_SERVICE_KEY
+                            )
+                            service_supabase.table("session_documents").insert({
+                                "session_id": session_id,
+                                "document_id": file_id
+                            }).execute()
+                            logger.info(f"Document associated with session successfully using service role")
+                        except Exception as service_error:
+                            logger.error(f"Error associating document with session using service role: {str(service_error)}")
+                            # Fall back to regular key
+                            logger.info(f"Falling back to regular key for associating document with session")
+                            self.supabase.table("session_documents").insert({
+                                "session_id": session_id,
+                                "document_id": file_id
+                            }).execute()
+                            logger.info(f"Document associated with session successfully")
+                    else:
+                        # No service key available, use regular key
+                        self.supabase.table("session_documents").insert({
+                            "session_id": session_id,
+                            "document_id": file_id
+                        }).execute()
+                        logger.info(f"Document associated with session successfully")
+                except Exception as e:
+                    logger.error(f"Error associating document with session: {str(e)}")
+                    # Continue despite the error - document is still uploaded and processed
 
             return {
                 "file_id": file_id,
                 "file_name": file.filename,
                 "file_type": file_ext,
                 "status": "processing",
-                "message": f"Document uploaded to {storage_type} storage and processing started"
+                "message": f"Document uploaded to {storage_type} storage and processing started",
+                "session_id": session_id
             }
 
         except HTTPException as e:
@@ -488,7 +527,7 @@ class DocumentService:
                 detail=f"Error deleting document: {str(e)}"
             )
 
-    async def _process_document(self, file_url: str, file_id: str, user_id: str, storage_type: str):
+    async def _process_document(self, file_url: str, file_id: str, user_id: str, storage_type: str, session_id: Optional[str] = None):
         """
         Process a document in the background.
 
@@ -497,6 +536,7 @@ class DocumentService:
             file_id: ID of the file
             user_id: ID of the user
             storage_type: Type of storage ('s3' or 'local')
+            session_id: Optional ID of the session to associate the document with
         """
         # For large documents, use Celery task instead of processing directly
         # This helps prevent timeouts and memory issues
@@ -540,7 +580,8 @@ class DocumentService:
                 file_id=file_id,
                 user_id=user_id,
                 file_path=file_url,
-                file_type=file_ext
+                file_type=file_ext,
+                session_id=session_id
             )
             return
         try:
@@ -549,7 +590,8 @@ class DocumentService:
                 file_path=file_url,
                 file_id=file_id,
                 user_id=user_id,
-                storage_type=storage_type
+                storage_type=storage_type,
+                session_id=session_id
             )
 
             # Update document status in Supabase

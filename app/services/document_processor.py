@@ -200,7 +200,7 @@ class DocumentProcessor:
             logger.error(f"Error loading document {file_path}: {str(e)}")
             raise
 
-    def process_document(self, file_path: str, file_id: str, user_id: str, storage_type: str = "local") -> Dict[str, Any]:
+    def process_document(self, file_path: str, file_id: str, user_id: str, storage_type: str = "local", session_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Process a document: load, chunk, and index it.
 
@@ -209,6 +209,7 @@ class DocumentProcessor:
             file_id: Unique ID for the file
             user_id: ID of the user who uploaded the file
             storage_type: Type of storage ("local" or "s3")
+            session_id: Optional ID of the session to associate the document with
 
         Returns:
             Dictionary with processing results
@@ -246,10 +247,16 @@ class DocumentProcessor:
 
             # Add additional metadata
             for node in nodes:
-                node.metadata.update({
+                metadata = {
                     "file_id": file_id,
                     "user_id": user_id
-                })
+                }
+
+                # Add session_id if provided
+                if session_id:
+                    metadata["session_id"] = session_id
+
+                node.metadata.update(metadata)
 
             # Store document nodes
             if self.use_weaviate and self.weaviate_client:
@@ -264,7 +271,7 @@ class DocumentProcessor:
                         weaviate_client=self.weaviate_client,
                         index_name=index_name,
                         text_key="text",
-                        metadata_keys=["file_id", "file_type", "file_name", "user_id"]
+                        metadata_keys=["file_id", "file_type", "file_name", "user_id", "session_id"]
                     )
 
                     # Create storage context and index

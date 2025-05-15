@@ -22,6 +22,7 @@ from langchain_openai import ChatOpenAI
 # Local imports
 from config.config import settings
 from app.services.document_processor import document_processor
+from app.services.llama_index_service import llama_index_service
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -287,7 +288,8 @@ class RAGService:
                                  message: str,
                                  user_id: str,
                                  file_ids: Optional[List[str]] = None,
-                                 chat_history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+                                 chat_history: Optional[List[Dict[str, str]]] = None,
+                                 session_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Chat with documents using the RAG system.
 
@@ -296,12 +298,55 @@ class RAGService:
             user_id: ID of the user
             file_ids: List of file IDs to include in the chat (optional)
             chat_history: List of previous chat messages (optional)
+            session_id: ID of the session (optional, for prioritizing session-specific chunks)
 
         Returns:
             Dictionary with chat response
         """
         try:
-            # Get the chat engine
+            # If session_id is provided, use direct LlamaIndex query for better session-specific results
+            if session_id and file_ids:
+                # Convert chat history to a prompt context
+                context = ""
+                if chat_history:
+                    for msg in chat_history[-3:]:  # Use last 3 messages for context
+                        role = msg["role"].capitalize()
+                        context += f"{role}: {msg['content']}\n"
+
+                # Create a more specific query with chat context
+                enhanced_query = f"{context}\nUser: {message}"
+
+                # Use LlamaIndex service directly with session_id
+                llama_response = await llama_index_service.query_documents(
+                    query=enhanced_query,
+                    file_ids=file_ids,
+                    user_id=user_id,
+                    top_k=5,
+                    session_id=session_id
+                )
+
+                # Extract source nodes
+                source_nodes = llama_response.get("source_documents", [])
+                sources = []
+
+                for node in source_nodes:
+                    sources.append({
+                        "text": node.get("content", ""),
+                        "metadata": node.get("metadata", {}),
+                        "score": node.get("score")
+                    })
+
+                # Format the result
+                return {
+                    "response": llama_response.get("response", ""),
+                    "message": message,
+                    "file_ids": file_ids,
+                    "user_id": user_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "sources": sources
+                }
+
+            # Fall back to chat engine if no session_id
             chat_engine = self.get_chat_engine(user_id, file_ids)
             if not chat_engine:
                 return {

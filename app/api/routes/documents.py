@@ -34,6 +34,7 @@ class DocumentPreviewResponse(BaseModel):
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    session_id: Optional[str] = None,
     current_user = Depends(auth_service.get_current_user)
 ):
     """
@@ -41,12 +42,13 @@ async def upload_document(
 
     Args:
         file: The file to upload
+        session_id: Optional ID of the session to associate the document with
         current_user: Current authenticated user
 
     Returns:
         DocumentResponse with file details
     """
-    return await document_service.upload_document(file, current_user["id"], background_tasks)
+    return await document_service.upload_document(file, current_user["id"], background_tasks, session_id)
 
 @router.get("/list", response_model=DocumentListResponse)
 async def list_documents(current_user = Depends(auth_service.get_current_user)):

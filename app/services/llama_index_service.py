@@ -5,7 +5,7 @@ import os
 import uuid
 import time
 import asyncio
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime
 import logging
 from enum import Enum
@@ -113,7 +113,7 @@ class LlamaIndexService:
                             weaviate_client=self.weaviate_client,
                             index_name=settings.LLAMAINDEX_INDEX_NAME,
                             text_key="content",
-                            metadata_keys=["file_id", "user_id", "page_number", "chunk_index", "heading", "chunking_strategy"]
+                            metadata_keys=["file_id", "user_id", "session_id", "page_number", "chunk_index", "heading", "chunking_strategy"]
                         )
 
                         # Create schema if it doesn't exist
@@ -182,6 +182,11 @@ class LlamaIndexService:
                             "description": "The ID of the user who owns this chunk"
                         },
                         {
+                            "name": "session_id",
+                            "dataType": ["text"],
+                            "description": "The ID of the session this chunk is associated with"
+                        },
+                        {
                             "name": "page_number",
                             "dataType": ["int"],
                             "description": "The page number this chunk is from"
@@ -213,7 +218,8 @@ class LlamaIndexService:
             logger.error(f"Error creating Weaviate schema: {str(e)}")
 
     async def process_file(self, file_path: str, file_id: str, user_id: str,
-                          file_type: FileType, chunking_strategy: ChunkingStrategy = ChunkingStrategy.HYBRID) -> Dict[str, Any]:
+                          file_type: FileType, chunking_strategy: ChunkingStrategy = ChunkingStrategy.HYBRID,
+                          session_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Process a file using LlamaIndex.
 
@@ -223,6 +229,7 @@ class LlamaIndexService:
             user_id: ID of the user who uploaded the file
             file_type: Type of the file
             chunking_strategy: Chunking strategy to use
+            session_id: ID of the session (optional)
 
         Returns:
             Dict containing processing results
@@ -238,7 +245,7 @@ class LlamaIndexService:
             page_count = len(documents)
 
             # Create nodes with appropriate chunking strategy
-            nodes = await self._create_nodes(documents, file_id, user_id, chunking_strategy)
+            nodes = await self._create_nodes(documents, file_id, user_id, chunking_strategy, session_id)
 
             # Create index with batch processing for large documents
             if self.storage_context and self.vector_store:
@@ -350,7 +357,7 @@ class LlamaIndexService:
         return False
 
     async def _create_nodes(self, documents: List[Document], file_id: str, user_id: str,
-                           chunking_strategy: ChunkingStrategy) -> List[TextNode]:
+                           chunking_strategy: ChunkingStrategy, session_id: Optional[str] = None) -> List[TextNode]:
         """
         Create nodes from documents using the specified chunking strategy.
 
@@ -359,6 +366,7 @@ class LlamaIndexService:
             file_id: Unique ID for the file
             user_id: ID of the user who uploaded the file
             chunking_strategy: Chunking strategy to use
+            session_id: ID of the session (optional)
 
         Returns:
             List of TextNode objects
@@ -400,6 +408,10 @@ class LlamaIndexService:
             doc.metadata["file_id"] = file_id
             doc.metadata["user_id"] = user_id
             doc.metadata["chunking_strategy"] = chunking_strategy
+
+            # Add session_id if provided
+            if session_id:
+                doc.metadata["session_id"] = session_id
 
             # If page_number is not set, use the document index
             if "page_number" not in doc.metadata:
@@ -616,7 +628,7 @@ class LlamaIndexService:
             }
 
     async def query_documents(self, query: str, file_ids: List[str], user_id: str,
-                             top_k: int = 5) -> Dict[str, Any]:
+                             top_k: int = 5, session_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Query documents using LlamaIndex.
 
@@ -625,6 +637,7 @@ class LlamaIndexService:
             file_ids: List of file IDs to search in
             user_id: ID of the user making the query
             top_k: Number of results to return
+            session_id: ID of the session (optional, for prioritizing session-specific chunks)
 
         Returns:
             Dict containing query results
@@ -640,24 +653,54 @@ class LlamaIndexService:
 
             # Add filters for file_ids and user_id
             if file_ids:
-                # Create a filter for the specified file IDs and user ID
+                # Base operands for the filter
+                filter_operands = [
+                    {
+                        "operator": "Or",
+                        "operands": [
+                            {"path": ["file_id"], "operator": "Equal", "valueString": file_id}
+                            for file_id in file_ids
+                        ]
+                    },
+                    {
+                        "path": ["user_id"],
+                        "operator": "Equal",
+                        "valueString": user_id
+                    }
+                ]
+
+                # If session_id is provided, prioritize chunks from this session
+                if session_id:
+                    # First, try to get chunks specifically from this session
+                    session_filter = {
+                        "operator": "And",
+                        "operands": filter_operands + [
+                            {
+                                "path": ["session_id"],
+                                "operator": "Equal",
+                                "valueString": session_id
+                            }
+                        ]
+                    }
+
+                    # Get session-specific chunks
+                    session_vector_store_query = self.vector_store.as_retriever(
+                        similarity_top_k=top_k,
+                        filters=session_filter
+                    )
+
+                    session_nodes = session_vector_store_query.retrieve(query)
+
+                    # If we got enough results from the session, use those
+                    if len(session_nodes) >= top_k // 2:  # At least half of requested results
+                        return self._create_response(query, session_nodes)
+
+                # If no session_id or not enough session-specific results, use regular filter
                 filter_dict = {
                     "operator": "And",
-                    "operands": [
-                        {
-                            "operator": "Or",
-                            "operands": [
-                                {"path": ["file_id"], "operator": "Equal", "valueString": file_id}
-                                for file_id in file_ids
-                            ]
-                        },
-                        {
-                            "path": ["user_id"],
-                            "operator": "Equal",
-                            "valueString": user_id
-                        }
-                    ]
+                    "operands": filter_operands
                 }
+
                 vector_store_query = self.vector_store.as_retriever(
                     similarity_top_k=top_k,
                     filters=filter_dict
@@ -669,41 +712,54 @@ class LlamaIndexService:
             # Execute the query
             nodes = vector_store_query.retrieve(query)
 
-            # Create a response
-            llm = Settings.llm
-            response_text = llm.complete(
-                f"""You are AnyDocAI, an AI document assistant that helps users understand their documents.
-
-                Use the following context from the user's documents to answer their question. If you don't know the answer, say you don't know.
-                Don't try to make up an answer. Always be helpful, concise, and professional.
-
-                Context:
-                {' '.join([node.text for node in nodes])}
-
-                Question: {query}
-
-                Answer:"""
-            ).text
-
-            # Format the response
-            response = {
-                "response": response_text,
-                "source_documents": [
-                    {
-                        "content": node.text,
-                        "metadata": node.metadata,
-                        "score": node.score if hasattr(node, "score") else None
-                    }
-                    for node in nodes
-                ],
-                "model_used": Settings.llm.model_name
-            }
-
-            return response
-
+            # Create and return the response
+            return self._create_response(query, nodes)
         except Exception as e:
             logger.error(f"Error querying documents: {str(e)}")
             raise
+
+    def _create_response(self, query: str, nodes: List) -> Dict[str, Any]:
+        """
+        Create a response from retrieved nodes.
+
+        Args:
+            query: The user's query
+            nodes: The retrieved nodes
+
+        Returns:
+            Dict containing the response
+        """
+        # Create a response
+        llm = Settings.llm
+        response_text = llm.complete(
+            f"""You are AnyDocAI, an AI document assistant that helps users understand their documents.
+
+            Use the following context from the user's documents to answer their question. If you don't know the answer, say you don't know.
+            Don't try to make up an answer. Always be helpful, concise, and professional.
+
+            Context:
+            {' '.join([node.text for node in nodes])}
+
+            Question: {query}
+
+            Answer:"""
+        ).text
+
+        # Format the response
+        response = {
+            "response": response_text,
+            "source_documents": [
+                {
+                    "content": node.text,
+                    "metadata": node.metadata,
+                    "score": node.score if hasattr(node, "score") else None
+                }
+                for node in nodes
+            ],
+            "model_used": Settings.llm.model_name
+        }
+
+        return response
 
     async def process_uploaded_file(self, file: UploadFile, user_id: str,
                                    chunking_strategy: ChunkingStrategy = ChunkingStrategy.HYBRID) -> Dict[str, Any]:
