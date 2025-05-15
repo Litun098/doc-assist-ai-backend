@@ -19,6 +19,9 @@ from weaviate.classes.init import Auth, AdditionalConfig, Timeout
 # Configuration
 from config.config import settings
 
+# Import connection pool
+from app.utils.connection_pool import connection_pool
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -80,8 +83,9 @@ class ConnectionManager:
                     supabase_key=settings.SUPABASE_KEY
                 )
 
-            # Store in pool
+            # Store in pool and register with connection pool
             self._supabase_clients[key_type] = client
+            connection_pool.register_supabase_client(client, key_type)
             return client
         except Exception as e:
             logger.error(f"Error creating Supabase client: {str(e)}")
@@ -136,8 +140,9 @@ class ConnectionManager:
                             time.sleep(1)  # Wait 1 second before retrying
 
                 if connection_successful:
-                    # Store in pool
+                    # Store in pool and register with connection pool
                     self._weaviate_clients[client_id] = client
+                    connection_pool.register_weaviate_client(client, client_id)
                     return client
                 else:
                     logger.error("Failed to connect to Weaviate after multiple attempts")
@@ -269,35 +274,12 @@ class ConnectionManager:
         # Clear the dictionary
         self._other_connections.clear()
 
-        # Final cleanup of any remaining HTTP clients
+        # Use the connection pool to clean up all remaining connections
         try:
-            # Clean up any httpx clients
-            import httpx
-            import importlib
-
-            # Try to reload httpx to ensure we have the latest state
-            importlib.reload(httpx)
-
-            # Close any default clients
-            if hasattr(httpx, 'get_async_client'):
-                client = httpx.get_async_client()
-                if client and hasattr(client, 'aclose'):
-                    import asyncio
-                    try:
-                        loop = asyncio.get_event_loop()
-                        if loop.is_running():
-                            loop.create_task(client.aclose())
-                        else:
-                            loop.run_until_complete(client.aclose())
-                    except Exception:
-                        pass
-
-            if hasattr(httpx, 'get_client'):
-                client = httpx.get_client()
-                if client and hasattr(client, 'close'):
-                    client.close()
-        except Exception as http_e:
-            logger.error(f"Error in final HTTP client cleanup: {str(http_e)}")
+            connection_pool.cleanup_all()
+            logger.info("Connection pool cleanup completed")
+        except Exception as e:
+            logger.error(f"Error in connection pool cleanup: {str(e)}")
 
         # Force garbage collection to clean up any remaining resources
         import gc

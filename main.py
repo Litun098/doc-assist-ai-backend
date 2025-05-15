@@ -29,8 +29,9 @@ tracemalloc.start()
 # Suppress ResourceWarnings during development
 warnings.filterwarnings("ignore", category=ResourceWarning)
 
-# Import socket cleanup utility
+# Import socket cleanup utility and connection pool
 from app.utils.socket_cleanup import cleanup_all_resources
+from app.utils.connection_pool import connection_pool
 
 # Create uploads directory if it doesn't exist
 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
@@ -78,8 +79,13 @@ async def lifespan(_app: FastAPI):
 
         # Final cleanup to prevent ResourceWarnings
         try:
+            # Clean up connection pool
+            connection_pool.cleanup_all()
+            logger.info("Connection pool cleanup completed")
+
             # Use our comprehensive cleanup utility
             cleanup_all_resources()
+            logger.info("Socket cleanup completed")
 
             # Take a snapshot to check for leaks
             snapshot = tracemalloc.take_snapshot()
