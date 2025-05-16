@@ -115,28 +115,40 @@ def test_authentication(email, password):
             logger.info(f"Token length: {len(access_token)}")
             logger.info(f"Token parts: {len(access_token.split('.'))}")
 
-            # Return the token for further testing
-            return access_token
+            # Create a new Supabase client with the token
+            # This is the most reliable way to use the token for authenticated requests
+            authenticated_supabase = create_client(
+                supabase_url=SUPABASE_URL,
+                supabase_key=SUPABASE_KEY,
+                options={
+                    "global": {
+                        "headers": {
+                            "Authorization": f"Bearer {access_token}"
+                        }
+                    }
+                }
+            )
+            logger.info("Created new Supabase client with authentication token")
+
+            # Return both the token and the authenticated client
+            return access_token, authenticated_supabase
         else:
             logger.error("Authentication failed: No user returned")
-            return None
+            return None, None
     except Exception as e:
         logger.error(f"Authentication failed: {str(e)}")
-        return None
+        return None, None
 
 def test_token_validation(token):
     """Test token validation with Supabase."""
     if not token:
         logger.error("No token provided for validation test")
-        return
+        return None
 
     logger.info("Testing token validation")
 
     # Connect to Supabase
     supabase = connect_to_supabase()
-
-    # We don't need to set the session, we can just use get_user directly
-    # Note: set_session requires both access_token and refresh_token
 
     # Test getting the user with the token
     try:
@@ -153,72 +165,119 @@ def test_token_validation(token):
         logger.error(f"Token validation failed: {str(e)}")
         return None
 
-def test_rls_policies(token, user_id):
+def test_rls_policies(token, user_id, auth_client=None):
     """Test RLS policies with authenticated user."""
     if not token or not user_id:
         logger.error("No token or user ID provided for RLS policy test")
         return
 
     logger.info("Testing RLS policies with authenticated user")
+    logger.info(f"User ID: {user_id}")
+    logger.info(f"Token: {token[:10]}...")
 
-    # Connect to Supabase
-    supabase = connect_to_supabase()
-
-    # Create headers with the token
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
+    # If no authenticated client was provided, create one
+    if not auth_client:
+        try:
+            auth_client = create_client(
+                supabase_url=SUPABASE_URL,
+                supabase_key=SUPABASE_KEY,
+                options={
+                    "global": {
+                        "headers": {
+                            "Authorization": f"Bearer {token}"
+                        }
+                    }
+                }
+            )
+            logger.info("Created new authenticated Supabase client")
+        except Exception as e:
+            logger.error(f"Failed to create authenticated client: {str(e)}")
+            return
 
     # Test users table
+    logger.info("\n=== Testing Users Table RLS ===")
     try:
-        # Use the token in the request headers
-        response = supabase.table("users").select("*").eq("id", user_id).execute(headers=headers)
+        response = auth_client.table("users").select("*").eq("id", user_id).execute()
         if response.data:
-            logger.info(f"Users table test successful: {len(response.data)} rows returned")
+            logger.info(f"✅ Users table test successful: {len(response.data)} rows returned")
             logger.info(f"User data: {json.dumps(response.data[0], indent=2)}")
         else:
-            logger.warning("Users table test: No data returned")
+            logger.warning("⚠️ Users table test: No data returned - This may indicate an RLS policy issue")
     except Exception as e:
-        logger.error(f"Users table test failed: {str(e)}")
+        logger.error(f"❌ Users table test failed: {str(e)}")
+        logger.error("This indicates an RLS policy issue with the users table")
 
     # Test documents table
+    logger.info("\n=== Testing Documents Table RLS ===")
     try:
-        response = supabase.table("documents").select("*").eq("user_id", user_id).execute(headers=headers)
-        logger.info(f"Documents table test: {len(response.data)} rows returned")
+        response = auth_client.table("documents").select("*").eq("user_id", user_id).execute()
+        logger.info(f"✅ Documents table test: {len(response.data)} rows returned")
     except Exception as e:
-        logger.error(f"Documents table test failed: {str(e)}")
+        logger.error(f"❌ Documents table test failed: {str(e)}")
+        logger.error("This indicates an RLS policy issue with the documents table")
 
     # Test chat_sessions table
+    logger.info("\n=== Testing Chat Sessions Table RLS ===")
     try:
-        response = supabase.table("chat_sessions").select("*").eq("user_id", user_id).execute(headers=headers)
-        logger.info(f"Chat sessions table test: {len(response.data)} rows returned")
+        response = auth_client.table("chat_sessions").select("*").eq("user_id", user_id).execute()
+        logger.info(f"✅ Chat sessions table test: {len(response.data)} rows returned")
     except Exception as e:
-        logger.error(f"Chat sessions table test failed: {str(e)}")
+        logger.error(f"❌ Chat sessions table test failed: {str(e)}")
+        logger.error("This indicates an RLS policy issue with the chat_sessions table")
 
     # Test inserting a record (chat session)
+    logger.info("\n=== Testing Insert/Delete Operations with RLS ===")
     try:
         session_name = f"Test Session {datetime.now().isoformat()}"
-        response = supabase.table("chat_sessions").insert({
+        response = auth_client.table("chat_sessions").insert({
             "user_id": user_id,
             "name": session_name,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
             "last_message_at": datetime.now().isoformat()
-        }).execute(headers=headers)
+        }).execute()
 
         if response.data:
-            logger.info(f"Insert test successful: Created session {response.data[0]['id']}")
+            session_id = response.data[0]['id']
+            logger.info(f"✅ Insert test successful: Created session {session_id}")
 
-            # Test deleting the record
+            # Test chat_messages table with the new session
+            logger.info("\n=== Testing Chat Messages Table RLS ===")
             try:
-                delete_response = supabase.table("chat_sessions").delete().eq("id", response.data[0]['id']).execute(headers=headers)
-                logger.info(f"Delete test successful: Deleted {len(delete_response.data)} rows")
+                message_response = auth_client.table("chat_messages").insert({
+                    "session_id": session_id,
+                    "role": "user",
+                    "content": "Test message",
+                    "timestamp": datetime.now().isoformat()
+                }).execute()
+
+                if message_response.data:
+                    logger.info(f"✅ Chat messages insert test successful")
+
+                    # Test selecting the message
+                    select_response = auth_client.table("chat_messages").select("*").eq("session_id", session_id).execute()
+                    logger.info(f"✅ Chat messages select test: {len(select_response.data)} rows returned")
+                else:
+                    logger.warning("⚠️ Chat messages insert test: No data returned")
             except Exception as e:
-                logger.error(f"Delete test failed: {str(e)}")
+                logger.error(f"❌ Chat messages test failed: {str(e)}")
+                logger.error("This indicates an RLS policy issue with the chat_messages table")
+
+            # Test deleting the session
+            try:
+                delete_response = auth_client.table("chat_sessions").delete().eq("id", session_id).execute()
+                logger.info(f"✅ Delete test successful: Deleted {len(delete_response.data)} rows")
+            except Exception as e:
+                logger.error(f"❌ Delete test failed: {str(e)}")
+                logger.error("This indicates an RLS policy issue with DELETE operations")
         else:
-            logger.warning("Insert test: No data returned")
+            logger.warning("⚠️ Insert test: No data returned - This may indicate an RLS policy issue")
     except Exception as e:
-        logger.error(f"Insert test failed: {str(e)}")
+        logger.error(f"❌ Insert test failed: {str(e)}")
+        logger.error("This indicates an RLS policy issue with INSERT operations")
+
+    logger.info("\n=== RLS Testing Complete ===")
+    logger.info("If you see any errors above, follow the instructions in scripts/FIX_RLS_ISSUES.md to fix them")
 
 def test_service_role_access():
     """Test service role access to tables."""
@@ -274,15 +333,15 @@ def main():
 
     # Test authentication if email and password provided
     if args.email and args.password:
-        token = test_authentication(args.email, args.password)
+        token, auth_client = test_authentication(args.email, args.password)
 
         if token:
             # Test token validation
             user_id = test_token_validation(token)
 
-            if user_id:
+            if user_id and auth_client:
                 # Test RLS policies
-                test_rls_policies(token, user_id)
+                test_rls_policies(token, user_id, auth_client)
     else:
         logger.info("Email and password not provided, skipping authentication tests")
         logger.info("To test authentication, run: python scripts/test_auth.py [email] [password]")

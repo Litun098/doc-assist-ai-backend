@@ -81,32 +81,71 @@ def get_existing_policies(supabase, table_name):
     """
     Get existing RLS policies for a table.
 
-    Note: We can't directly query pg_policies through the REST API,
-    so we'll just return an empty list and assume we need to recreate all policies.
+    This function queries pg_policies to get existing policies.
     """
-    logger.info(f"Getting existing policies for {table_name} (simulated)")
-    return []
+    logger.info(f"Getting existing policies for {table_name}")
+
+    # SQL to query pg_policies
+    sql = f"""
+    SELECT policyname
+    FROM pg_policies
+    WHERE tablename = '{table_name}';
+    """
+
+    try:
+        # Execute the SQL using RPC
+        response = supabase.rpc('exec_sql', {'sql': sql}).execute()
+
+        if response.data:
+            policies = response.data
+            logger.info(f"Found {len(policies)} existing policies for {table_name}")
+            return policies
+        else:
+            logger.info(f"No existing policies found for {table_name}")
+            return []
+    except Exception as e:
+        logger.error(f"Failed to get existing policies: {str(e)}")
+        return []
 
 def drop_policy(supabase, policy_name, table_name):
     """
     Drop an existing RLS policy.
 
-    Note: We can't directly execute SQL through the REST API,
-    so we'll just log the action and assume it succeeded.
+    This function builds and executes the SQL to drop a policy.
     """
-    logger.info(f"Would drop policy {policy_name} on {table_name} (simulated)")
-    return True
+    # Build the SQL statement
+    sql = f"DROP POLICY IF EXISTS \"{policy_name}\" ON {table_name};"
+
+    logger.info(f"Dropping policy {policy_name} on {table_name}")
+
+    try:
+        # Execute the SQL using RPC
+        supabase.rpc('exec_sql', {'sql': sql}).execute()
+        logger.info(f"Policy dropped successfully: {policy_name}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to drop policy: {str(e)}")
+        return False
 
 def create_policy(supabase, policy_name, table_name, operation, using_expr=None, check_expr=None):
     """
     Create a new RLS policy.
 
-    Note: We can't directly execute SQL through the REST API,
-    so we'll just log the action and assume it succeeded.
+    This function builds and executes the SQL to create a policy.
     """
     if operation.upper() not in ["ALL", "SELECT", "INSERT", "UPDATE", "DELETE"]:
         logger.error(f"Invalid operation: {operation}")
         return None
+
+    # Build the SQL statement
+    sql = f"CREATE POLICY \"{policy_name}\" ON {table_name} FOR {operation.upper()}"
+
+    if using_expr:
+        sql += f" USING ({using_expr})"
+    if check_expr:
+        sql += f" WITH CHECK ({check_expr})"
+
+    sql += ";"
 
     policy_description = f"Policy '{policy_name}' on '{table_name}' for {operation.upper()}"
     if using_expr:
@@ -114,18 +153,36 @@ def create_policy(supabase, policy_name, table_name, operation, using_expr=None,
     if check_expr:
         policy_description += f" WITH CHECK ({check_expr})"
 
-    logger.info(f"Would create {policy_description} (simulated)")
-    return True
+    logger.info(f"Creating {policy_description}")
+
+    try:
+        # Execute the SQL using RPC
+        supabase.rpc('exec_sql', {'sql': sql}).execute()
+        logger.info(f"Policy created successfully: {policy_name}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to create policy: {str(e)}")
+        return False
 
 def enable_rls(supabase, table_name):
     """
     Enable RLS on a table.
 
-    Note: We can't directly execute SQL through the REST API,
-    so we'll just log the action and assume it succeeded.
+    This function builds and executes the SQL to enable RLS.
     """
-    logger.info(f"Would enable RLS on {table_name} (simulated)")
-    return True
+    # Build the SQL statement
+    sql = f"ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;"
+
+    logger.info(f"Enabling RLS on {table_name}")
+
+    try:
+        # Execute the SQL using RPC
+        supabase.rpc('exec_sql', {'sql': sql}).execute()
+        logger.info(f"RLS enabled successfully on {table_name}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to enable RLS: {str(e)}")
+        return False
 
 def fix_users_table_policies(supabase):
     """Fix RLS policies for the users table."""
