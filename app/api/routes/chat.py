@@ -20,7 +20,6 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     """Request model for chat."""
     message: str
-    file_ids: Optional[List[str]] = None
     chat_history: Optional[List[ChatMessage]] = None
     use_agent: bool = False
 
@@ -368,22 +367,15 @@ async def chat_message(
     Returns:
         ChatResponse with assistant's response
     """
-    # Create a temporary session if file_ids are provided
-    if request.file_ids:
-        session = await chat_service.create_session(
-            user_id=current_user["id"],
-            name=f"Temp Session {datetime.now().isoformat()}",
-            document_ids=request.file_ids
-        )
+    # Create a temporary session
+    session = await chat_service.create_session(
+        user_id=current_user["id"],
+        name=f"Temp Session {datetime.now().isoformat()}"
+    )
 
-        return await chat_service.send_message(
-            session_id=session["session_id"],
-            user_id=current_user["id"],
-            message=request.message,
-            use_agent=request.use_agent
-        )
-    else:
-        raise HTTPException(
-            status_code=400,
-            detail="file_ids are required for this endpoint"
-        )
+    return await chat_service.send_message(
+        session_id=session["session_id"],
+        user_id=current_user["id"],
+        message=request.message,
+        use_agent=request.use_agent
+    )

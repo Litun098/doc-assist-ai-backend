@@ -341,5 +341,5 @@ displayMessage(messageResponse.data);
 | `/api/sessions/{id}` | GET | None | Session details |
 | `/api/sessions/{id}/documents` | GET | None | List of session documents |
 | `/api/sessions/{id}/messages` | GET | None | List of messages |
-| `/api/sessions/{id}/messages` | POST | `message`, `use_agent` | AI response |
+| `/api/sessions/{id}/messages` | POST | `message`, `use_agent` (no file_ids needed) | AI response |
 | `/api/sessions/{id}/suggestions` | GET | None | Suggested queries |

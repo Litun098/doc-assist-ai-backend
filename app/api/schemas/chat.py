@@ -52,7 +52,6 @@ class MessageListResponse(BaseModel):
 # Chat schemas
 class ChatRequest(BaseModel):
     message: str = Field(..., description="User message")
-    file_ids: Optional[List[str]] = Field(default=None, description="List of file IDs (for legacy endpoint)")
     use_agent: bool = Field(default=False, description="Whether to use the agent service")
 
 class ChatResponse(BaseModel):
