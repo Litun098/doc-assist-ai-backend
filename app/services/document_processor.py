@@ -9,7 +9,7 @@ import asyncio
 from typing import List, Dict, Any, Optional, Tuple
 from enum import Enum
 
-# LlamaIndex imports
+# LlamaIndex imports - using modular package structure
 from llama_index.core import Document as LlamaDocument
 from llama_index.core import VectorStoreIndex, StorageContext
 from llama_index.core.node_parser import SentenceSplitter

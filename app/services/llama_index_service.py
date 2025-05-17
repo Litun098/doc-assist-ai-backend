@@ -10,7 +10,7 @@ from datetime import datetime
 import logging
 from enum import Enum
 
-# LlamaIndex imports
+# LlamaIndex imports - using modular package structure
 from llama_index.core import (
     VectorStoreIndex,
     SimpleDirectoryReader,

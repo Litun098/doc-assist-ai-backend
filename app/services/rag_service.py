@@ -6,7 +6,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 
-# LlamaIndex imports
+# LlamaIndex imports - using modular package structure
 from llama_index.core import VectorStoreIndex, StorageContext
 from llama_index.core.retrievers import VectorIndexRetriever
 from llama_index.core.query_engine import RetrieverQueryEngine
