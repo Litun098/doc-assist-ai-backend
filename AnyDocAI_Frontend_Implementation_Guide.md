@@ -1,303 +1,142 @@
-# AnyDocAI Frontend Implementation Guide
-
-This guide outlines how to implement the frontend chat page for AnyDocAI using the new API endpoints.
-
-## Chat Page Implementation Overview
-
-The chat page is the core of the AnyDocAI application, allowing users to interact with their documents through AI-powered conversations. Here's how to implement it using the new API endpoints.
-
-## Key Components and API Usage
-
-### 1. Authentication & Session Management
-
-**Components:**
-- Login/Register forms
-- Authentication state management
-- Session persistence
-
-**APIs to Use:**
-- `/api/register` - For new user registration
-- `/api/login` - For user authentication
-- `/api/me` - To verify current user and get user details
-- `/api/status` - To check authentication status
-
-**Implementation Notes:**
-- Store authentication token in localStorage or secure cookie
-- Add token to all subsequent API requests
-- Implement authentication state in a context provider
-
-### 2. Document Management Sidebar
-
-**Components:**
-- Document list
-- Upload button
-- Document preview
-- Document selection for chat
-
-**APIs to Use:**
-- `/api/upload` - For uploading new documents
-- `/api/list` - To fetch all user documents
-- `/api/{file_id}/preview` - To show document previews
-- `/api/{file_id}` (DELETE) - To remove documents
-
-**Implementation Notes:**
-- Show upload progress during document upload
-- Allow multiple document selection for chat sessions
-- Display document metadata (name, type, size)
-
-### 3. Chat Session Management
-
-**Components:**
-- Session list
-- Create new session button
-- Session selection
-- Session management (rename, delete)
-
-**APIs to Use:**
-- `/api/sessions` (GET) - To list all chat sessions
-- `/api/sessions` (POST) - To create new chat sessions
-- `/api/sessions/{session_id}` (DELETE) - To delete sessions
-- `/api/sessions/{session_id}/documents` (GET) - To get documents in a session
-- `/api/sessions/{session_id}/documents` (PUT) - To add documents to a session
-- `/api/sessions/{session_id}/documents/{document_id}` (DELETE) - To remove documents from a session
-
-**Implementation Notes:**
-- Allow creating empty sessions or sessions with documents
-- Show document thumbnails in session list
-- Enable drag-and-drop for adding documents to sessions
-
-### 4. Chat Interface
-
-**Components:**
-- Message list
-- Message input
-- AI response rendering
-- Source citation display
-- Chart/visualization rendering
-
-**APIs to Use:**
-- `/api/sessions/{session_id}/messages` (GET) - To fetch message history
-- `/api/sessions/{session_id}/messages` (POST) - To send new messages
-- `/api/sessions/{session_id}/suggestions` - To get AI-generated question suggestions
-
-**Implementation Notes:**
-- Implement optimistic UI updates for sent messages
-- Show typing indicators during AI response generation
-- Render markdown in AI responses
-- Display source citations with links to original documents
-- Render charts when chart_data is present in responses
-
-### 5. Agent Mode Toggle
-
-**Components:**
-- Agent mode toggle switch
-- Agent capabilities explanation
-
-**APIs to Use:**
-- Same message endpoint with `use_agent` parameter:
-  - `/api/sessions/{session_id}/messages` (POST) with `use_agent: true`
-
-**Implementation Notes:**
-- Clearly indicate when agent mode is active
-- Explain the difference between regular chat and agent mode
-- Show examples of agent capabilities (data analysis, chart generation)
-
-### 6. Suggested Questions (New Feature)
-
-**Components:**
-- Suggestion chips/buttons
-- Suggestion loading state
-
-**APIs to Use:**
-- `/api/sessions/{session_id}/suggestions` - To get AI-generated suggestions based on document content
-
-**Implementation Notes:**
-- Show suggestions when a new chat session is created with documents
-- Display suggestions as clickable chips/buttons
-- Send the suggestion text as a message when clicked
-- Show loading state while suggestions are being generated
-
-### 7. Advanced Document Processing (Optional)
-
-**Components:**
-- Advanced upload options
-- Processing method selection
-
-**APIs to Use:**
-- `/api/llama-index/upload` - For specialized document processing
-- `/api/llama-index/query` - For direct document querying with advanced options
-
-**Implementation Notes:**
-- Only expose these options to advanced users
-- Provide UI for selecting processing options
-- Explain the benefits of different processing methods
-
-## Implementation Flow
-
-1. **Initial Load:**
-   - Authenticate user with `/api/status` and `/api/me`
-   - Load document list with `/api/list`
-   - Load session list with `/api/sessions`
-
-2. **Creating a New Chat:**
-   - Create session with `/api/sessions`
-   - Add documents with `/api/sessions/{session_id}/documents`
-   - Get suggestions with `/api/sessions/{session_id}/suggestions`
-
-3. **Chat Interaction:**
-   - Load message history with `/api/sessions/{session_id}/messages`
-   - Send messages with `/api/sessions/{session_id}/messages`
-   - Toggle agent mode as needed
-   - Display responses with source citations and visualizations
-
-4. **Document Management:**
-   - Upload documents as needed with `/api/upload`
-   - Add/remove documents from sessions as needed
-
-## Special Considerations
-
-### 1. Error Handling
-
-- Implement proper error handling for all API calls
-- Show user-friendly error messages
-- Provide retry options for failed operations
-- Handle authentication errors and redirect to login
-
-### 2. Loading States
-
-- Show loading indicators for all async operations
-- Implement skeleton loaders for initial data fetching
-- Use typing indicators during AI response generation
-
-### 3. Responsive Design
-
-- Ensure the chat interface works well on mobile devices
-- Implement collapsible sidebars for document and session lists
-- Optimize message display for different screen sizes
-
-### 4. Performance Optimization
-
-- Implement pagination for large message histories
-- Lazy load document previews
-- Cache session and document data
-- Debounce user input in message field
-
-## Legacy API Support
-
-If you need to support the legacy chat API for backward compatibility:
-
-- `/api/message` - For one-off queries without creating a session
-
-This can be useful for quick document queries without the overhead of session management.
-
-## Conclusion
-
-By following this implementation guide, you can create a comprehensive chat interface for AnyDocAI that leverages all the new API endpoints, including the suggestions feature we recently implemented. The modular approach allows for incremental development and easy maintenance.
-
-Focus on creating a seamless user experience with proper loading states, error handling, and responsive design to make the chat interface intuitive and efficient.
-
-
-AnyDocAI Chat Page Implementation Workflow
-Here's the complete workflow for implementing the chat page in AnyDocAI, detailing which APIs to call at each step:
-
-Initial Page Load
-Authentication Check
-Call /api/status to verify if user is authenticated
-If not authenticated, redirect to login page
-If authenticated, proceed with loading data
-Load User Information
-Call /api/me to get current user details
-Display user information in the UI (name, avatar, etc.)
-Load Chat Sessions
-Call /api/sessions (GET) to retrieve all user's chat sessions
-Display sessions in the sidebar, sorted by most recent
-Load Documents Library
-Call /api/list to get all user's uploaded documents
-Display documents in a separate tab or section for easy access
-Session Selection / Creation
-Select Existing Session
-When user clicks on a session in the sidebar:
-Call /api/sessions/{session_id}/messages to load message history
-Call /api/sessions/{session_id}/documents to get documents attached to this session
-Display messages in the chat area and documents in the document panel
-Create New Session
-When user clicks "New Chat":
-Show session creation dialog with name input and document selection
-Call /api/sessions (POST) with session name and selected document IDs
-After creation, load the new empty session
-Document Selection for New Session
-Allow user to select documents from their library
-Alternatively, allow direct upload for new session:
-Call /api/upload with file data
-Once upload completes, add the new document ID to the session
-New Session Initialization
-Get Suggested Questions
-For a new session with documents but no messages:
-Call /api/sessions/{session_id}/suggestions to get AI-generated question suggestions
-Display these as clickable chips/buttons above the message input
-When user clicks a suggestion, use it as the message text
-Chat Interaction
-Send Message
-When user types a message and hits send:
-Call /api/sessions/{session_id}/messages (POST) with message text and agent mode toggle
-Include use_agent: true parameter if agent mode is enabled
-Show loading/typing indicator while waiting for response
-Display Response
-When response is received:
-Display the AI response with proper formatting (markdown)
-If response includes sources, display them with links to the source documents
-If response includes chart_data, render the appropriate visualization
-Message History Management
-Load more messages when user scrolls up (implement pagination)
-Automatically scroll to bottom when new messages arrive
-Document Management During Chat
-Add Documents to Session
-When user wants to add documents to the current session:
-Show document selection dialog with library
-Call /api/sessions/{session_id}/documents (PUT) with selected document IDs
-Update the document panel to show newly added documents
-Remove Documents from Session
-When user removes a document from the session:
-Call /api/sessions/{session_id}/documents/{document_id} (DELETE)
-Update the document panel to reflect changes
-Document Preview
-When user clicks on a document in the session:
-Call /api//{file_id}/preview to get document preview
-Display preview in a modal or side panel
-Agent Mode
-Toggle Agent Mode
-Provide a toggle switch for agent mode
-When enabled, all subsequent messages use use_agent: true parameter
-Visually indicate when agent mode is active
-Potentially show different UI elements for agent capabilities (chart options, etc.)
-Session Management
-Delete Session
-When user wants to delete a session:
-Show confirmation dialog
-Call /api/sessions/{session_id} (DELETE)
-Update session list and navigate to another session or create new
-Rename Session
-If you implement session renaming:
-Call appropriate API endpoint (this may be a custom extension)
-Update session list to reflect new name
-Advanced Features (Optional)
-Advanced Document Processing
-For power users, provide access to LlamaIndex endpoints:
-Call /api/llama-index/upload for specialized document processing
-Call /api/llama-index/query for direct document querying with advanced options
-Direct Document Query (Legacy Support)
-For quick one-off queries without session context:
-Call /api/message with document IDs and query
-Display response without saving to a session
-Error Handling
-API Error Handling
-Implement proper error handling for all API calls
-Show user-friendly error messages
-Provide retry options for failed operations
-Handle authentication errors (redirect to login)
-Real-time Updates (If Supported)
-WebSocket Connection (If Available)
-Connect to WebSocket for real-time updates
-Update UI when new messages or sessions are created
-Show typing indicators in real-time
-This workflow covers the complete implementation of the chat page, from initial load to all user interactions, using the new API endpoints. The implementation focuses on creating a seamless user experience while efficiently using the backend APIs.
+[
+  {
+    "rolname": "supabase_admin",
+    "query": "LOCK TABLE \"realtime\".\"schema_migrations\" IN SHARE UPDATE EXCLUSIVE MODE",
+    "calls": 160,
+    "total_time": 94817.813476,
+    "prop_total_time": "54.8%"
+  },
+  {
+    "rolname": "postgres",
+    "query": "with tables as (SELECT\n  c.oid :: int8 AS id,\n  nc.nspname AS schema,\n  c.relname AS name,\n  c.relrowsecurity AS rls_enabled,\n  c.relforcerowsecurity AS rls_forced,\n  CASE\n    WHEN c.relreplident = $1 THEN $2\n    WHEN c.relreplident = $3 THEN $4\n    WHEN c.relreplident = $5 THEN $6\n    ELSE $7\n  END AS replica_identity,\n  pg_total_relation_size(format($8, nc.nspname, c.relname)) :: int8 AS bytes,\n  pg_size_pretty(\n    pg_total_relation_size(format($9, nc.nspname, c.relname))\n  ) AS size,\n  pg_stat_get_live_tuples(c.oid) AS live_rows_estimate,\n  pg_stat_get_dead_tuples(c.oid) AS dead_rows_estimate,\n  obj_description(c.oid) AS comment,\n  coalesce(pk.primary_keys, $10) as primary_keys,\n  coalesce(\n    jsonb_agg(relationships) filter (where relationships is not null),\n    $11\n  ) as relationships\nFROM\n  pg_namespace nc\n  JOIN pg_class c ON nc.oid = c.relnamespace\n  left join (\n    select\n      table_id,\n      jsonb_agg(_pk.*) as primary_keys\n    from (\n      select\n        n.nspname as schema,\n        c.relname as table_name,\n        a.attname as name,\n        c.oid :: int8 as table_id\n      from\n        pg_index i,\n        pg_class c,\n        pg_attribute a,\n        pg_namespace n\n      where\n        i.indrelid = c.oid\n        and c.relnamespace = n.oid\n        and a.attrelid = c.oid\n        and a.attnum = any (i.indkey)\n        and i.indisprimary\n    ) as _pk\n    group by table_id\n  ) as pk\n  on pk.table_id = c.oid\n  left join (\n    select\n      c.oid :: int8 as id,\n      c.conname as constraint_name,\n      nsa.nspname as source_schema,\n      csa.relname as source_table_name,\n      sa.attname as source_column_name,\n      nta.nspname as target_table_schema,\n      cta.relname as target_table_name,\n      ta.attname as target_column_name\n    from\n      pg_constraint c\n    join (\n      pg_attribute sa\n      join pg_class csa on sa.attrelid = csa.oid\n      join pg_namespace nsa on csa.relnamespace = nsa.oid\n    ) on sa.attrelid = c.conrelid and sa.attnum = any (c.conkey)\n    join (\n      pg_attribute ta\n      join pg_class cta on ta.attrelid = cta.oid\n      join pg_namespace nta on cta.relnamespace = nta.oid\n    ) on ta.attrelid = c.confrelid and ta.attnum = any (c.confkey)\n    where\n      c.contype = $12\n  ) as relationships\n  on (relationships.source_schema = nc.nspname and relationships.source_table_name = c.relname)\n  or (relationships.target_table_schema = nc.nspname and relationships.target_table_name = c.relname)\nWHERE\n  c.relkind IN ($13, $14)\n  AND NOT pg_is_other_temp_schema(nc.oid)\n  AND (\n    pg_has_role(c.relowner, $15)\n    OR has_table_privilege(\n      c.oid,\n      $16\n    )\n    OR has_any_column_privilege(c.oid, $17)\n  )\ngroup by\n  c.oid,\n  c.relname,\n  c.relrowsecurity,\n  c.relforcerowsecurity,\n  c.relreplident,\n  nc.nspname,\n  pk.primary_keys\n)\n  , columns as (-- Adapted from information_schema.columns\n\nSELECT\n  c.oid :: int8 AS table_id,\n  nc.nspname AS schema,\n  c.relname AS table,\n  (c.oid || $18 || a.attnum) AS id,\n  a.attnum AS ordinal_position,\n  a.attname AS name,\n  CASE\n    WHEN a.atthasdef THEN pg_get_expr(ad.adbin, ad.adrelid)\n    ELSE $19\n  END AS default_value,\n  CASE\n    WHEN t.typtype = $20 THEN CASE\n      WHEN bt.typelem <> $21 :: oid\n      AND bt.typlen = $22 THEN $23\n      WHEN nbt.nspname = $24 THEN format_type(t.typbasetype, $25)\n      ELSE $26\n    END\n    ELSE CASE\n      WHEN t.typelem <> $27 :: oid\n      AND t.typlen = $28 THEN $29\n      WHEN nt.nspname = $30 THEN format_type(a.atttypid, $31)\n      ELSE $32\n    END\n  END AS data_type,\n  COALESCE(bt.typname, t.typname) AS format,\n  a.attidentity IN ($33, $34) AS is_identity,\n  CASE\n    a.attidentity\n    WHEN $35 THEN $36\n    WHEN $37 THEN $38\n    ELSE $39\n  END AS identity_generation,\n  a.attgenerated IN ($40) AS is_generated,\n  NOT (\n    a.attnotnull\n    OR t.typtype = $41 AND t.typnotnull\n  ) AS is_nullable,\n  (\n    c.relkind IN ($42, $43)\n    OR c.relkind IN ($44, $45) AND pg_column_is_updatable(c.oid, a.attnum, $46)\n  ) AS is_updatable,\n  uniques.table_id IS NOT NULL AS is_unique,\n  check_constraints.definition AS \"check\",\n  array_to_json(\n    array(\n      SELECT\n        enumlabel\n      FROM\n        pg_catalog.pg_enum enums\n      WHERE\n        enums.enumtypid = coalesce(bt.oid, t.oid)\n        OR enums.enumtypid = coalesce(bt.typelem, t.typelem)\n      ORDER BY\n        enums.enumsortorder\n    )\n  ) AS enums,\n  col_description(c.oid, a.attnum) AS comment\nFROM\n  pg_attribute a\n  LEFT JOIN pg_attrdef ad ON a.attrelid = ad.adrelid\n  AND a.attnum = ad.adnum\n  JOIN (\n    pg_class c\n    JOIN pg_namespace nc ON c.relnamespace = nc.oid\n  ) ON a.attrelid = c.oid\n  JOIN (\n    pg_type t\n    JOIN pg_namespace nt ON t.typnamespace = nt.oid\n  ) ON a.atttypid = t.oid\n  LEFT JOIN (\n    pg_type bt\n    JOIN pg_namespace nbt ON bt.typnamespace = nbt.oid\n  ) ON t.typtype = $47\n  AND t.typbasetype = bt.oid\n  LEFT JOIN (\n    SELECT DISTINCT ON (table_id, ordinal_position)\n      conrelid AS table_id,\n      conkey[$48] AS ordinal_position\n    FROM pg_catalog.pg_constraint\n    WHERE contype = $49 AND cardinality(conkey) = $50\n  ) AS uniques ON uniques.table_id = c.oid AND uniques.ordinal_position = a.attnum\n  LEFT JOIN (\n    -- We only select the first column check\n    SELECT DISTINCT ON (table_id, ordinal_position)\n      conrelid AS table_id,\n      conkey[$51] AS ordinal_position,\n      substring(\n        pg_get_constraintdef(pg_constraint.oid, $52),\n        $53,\n        length(pg_get_constraintdef(pg_constraint.oid, $54)) - $55\n      ) AS \"definition\"\n    FROM pg_constraint\n    WHERE contype = $56 AND cardinality(conkey) = $57\n    ORDER BY table_id, ordinal_position, oid asc\n  ) AS check_constraints ON check_constraints.table_id = c.oid AND check_constraints.ordinal_position = a.attnum\nWHERE\n  NOT pg_is_other_temp_schema(nc.oid)\n  AND a.attnum > $58\n  AND NOT a.attisdropped\n  AND (c.relkind IN ($59, $60, $61, $62, $63))\n  AND (\n    pg_has_role(c.relowner, $64)\n    OR has_column_privilege(\n      c.oid,\n      a.attnum,\n      $65\n    )\n  )\n)\nselect\n  *\n  , \nCOALESCE(\n  (\n    SELECT\n      array_agg(row_to_json(columns)) FILTER (WHERE columns.table_id = tables.id)\n    FROM\n      columns\n  ),\n  $66\n) AS columns\nfrom tables where schema IN ($67)",
+    "calls": 242,
+    "total_time": 20888.745902,
+    "prop_total_time": "12.1%"
+  },
+  {
+    "rolname": "authenticator",
+    "query": "SELECT name FROM pg_timezone_names",
+    "calls": 81,
+    "total_time": 14457.803699,
+    "prop_total_time": "8.4%"
+  },
+  {
+    "rolname": "postgres",
+    "query": "with f as (\n      \n-- CTE with sane arg_modes, arg_names, and arg_types.\n-- All three are always of the same length.\n-- All three include all args, including OUT and TABLE args.\nwith functions as (\n  select\n    *,\n    -- proargmodes is null when all arg modes are IN\n    coalesce(\n      p.proargmodes,\n      array_fill($1::text, array[cardinality(coalesce(p.proallargtypes, p.proargtypes))])\n    ) as arg_modes,\n    -- proargnames is null when all args are unnamed\n    coalesce(\n      p.proargnames,\n      array_fill($2::text, array[cardinality(coalesce(p.proallargtypes, p.proargtypes))])\n    ) as arg_names,\n    -- proallargtypes is null when all arg modes are IN\n    coalesce(p.proallargtypes, p.proargtypes) as arg_types,\n    array_cat(\n      array_fill($3, array[pronargs - pronargdefaults]),\n      array_fill($4, array[pronargdefaults])) as arg_has_defaults\n  from\n    pg_proc as p\n  where\n    p.prokind = $5\n)\nselect\n  f.oid as id,\n  n.nspname as schema,\n  f.proname as name,\n  l.lanname as language,\n  case\n    when l.lanname = $6 then $7\n    else f.prosrc\n  end as definition,\n  case\n    when l.lanname = $8 then f.prosrc\n    else pg_get_functiondef(f.oid)\n  end as complete_statement,\n  coalesce(f_args.args, $9) as args,\n  pg_get_function_arguments(f.oid) as argument_types,\n  pg_get_function_identity_arguments(f.oid) as identity_argument_types,\n  f.prorettype as return_type_id,\n  pg_get_function_result(f.oid) as return_type,\n  nullif(rt.typrelid, $10) as return_type_relation_id,\n  f.proretset as is_set_returning_function,\n  case\n    when f.provolatile = $11 then $12\n    when f.provolatile = $13 then $14\n    when f.provolatile = $15 then $16\n  end as behavior,\n  f.prosecdef as security_definer,\n  f_config.config_params as config_params\nfrom\n  functions f\n  left join pg_namespace n on f.pronamespace = n.oid\n  left join pg_language l on f.prolang = l.oid\n  left join pg_type rt on rt.oid = f.prorettype\n  left join (\n    select\n      oid,\n      jsonb_object_agg(param, value) filter (where param is not null) as config_params\n    from\n      (\n        select\n          oid,\n          (string_to_array(unnest(proconfig), $17))[$18] as param,\n          (string_to_array(unnest(proconfig), $19))[$20] as value\n        from\n          functions\n      ) as t\n    group by\n      oid\n  ) f_config on f_config.oid = f.oid\n  left join (\n    select\n      oid,\n      jsonb_agg(jsonb_build_object(\n        $21, t2.mode,\n        $22, name,\n        $23, type_id,\n        -- Cast null into false boolean\n        $24, COALESCE(has_default, $25)\n      )) as args\n    from\n      (\n        select\n          oid,\n          unnest(arg_modes) as mode,\n          unnest(arg_names) as name,\n          -- Coming from: coalesce(p.proallargtypes, p.proargtypes) postgres won't automatically assume\n          -- integer, we need to cast it to be properly parsed\n          unnest(arg_types)::int8 as type_id,\n          unnest(arg_has_defaults) as has_default\n        from\n          functions\n      ) as t1,\n      lateral (\n        select\n          case\n            when t1.mode = $26 then $27\n            when t1.mode = $28 then $29\n            when t1.mode = $30 then $31\n            when t1.mode = $32 then $33\n            else $34\n          end as mode\n      ) as t2\n    group by\n      t1.oid\n  ) f_args on f_args.oid = f.oid\n\n    )\n    select\n      f.*\n    from f\n   where schema NOT IN ($35,$36,$37)\n\n-- source: dashboard\n-- user: bae399e7-f35d-456c-8c0a-77d41e171e1b\n-- date: 2025-04-20T06:16:49.251Z",
+    "calls": 39,
+    "total_time": 11050.066709,
+    "prop_total_time": "6.4%"
+  },
+  {
+    "rolname": "postgres",
+    "query": "with base_table_info as ( select c.oid::int8 as id, nc.nspname as schema, c.relname as name, c.relkind, c.relrowsecurity as rls_enabled, c.relforcerowsecurity as rls_forced, c.relreplident, c.relowner, obj_description(c.oid) as comment from pg_class c join pg_namespace nc on nc.oid = c.relnamespace where c.oid = $1 and not pg_is_other_temp_schema(nc.oid) and ( pg_has_role(c.relowner, $2) or has_table_privilege( c.oid, $3 ) or has_any_column_privilege(c.oid, $4) ) ), table_stats as ( select b.id, case when b.relreplident = $5 then $6 when b.relreplident = $7 then $8 when b.relreplident = $9 then $10 else $11 end as replica_identity, pg_total_relation_size(format($12, b.schema, b.name))::int8 as bytes, pg_size_pretty(pg_total_relation_size(format($13, b.schema, b.name))) as size, pg_stat_get_live_tuples(b.id) as live_rows_estimate, pg_stat_get_dead_tuples(b.id) as dead_rows_estimate from base_table_info b where b.relkind in ($14, $15) ), primary_keys as ( select i.indrelid as table_id, jsonb_agg(jsonb_build_object( $16, n.nspname, $17, c.relname, $18, i.indrelid::int8, $19, a.attname )) as primary_keys from pg_index i join pg_class c on i.indrelid = c.oid join pg_attribute a on (a.attrelid = c.oid and a.attnum = any(i.indkey)) join pg_namespace n on c.relnamespace = n.oid where i.indisprimary group by i.indrelid ), relationships as ( select c.conrelid as source_id, c.confrelid as target_id, jsonb_build_object( $20, c.oid::int8, $21, c.conname, $22, c.confdeltype, $23, c.confupdtype, $24, nsa.nspname, $25, csa.relname, $26, sa.attname, $27, nta.nspname, $28, cta.relname, $29, ta.attname ) as rel_info from pg_constraint c join pg_class csa on c.conrelid = csa.oid join pg_namespace nsa on csa.relnamespace = nsa.oid join pg_attribute sa on (sa.attrelid = c.conrelid and sa.attnum = any(c.conkey)) join pg_class cta on c.confrelid = cta.oid join pg_namespace nta on cta.relnamespace = nta.oid join pg_attribute ta on (ta.attrelid = c.confrelid and ta.attnum = any(c.confkey)) where c.contype = $30 ), columns as ( select a.attrelid as table_id, jsonb_agg(jsonb_build_object( $31, (a.attrelid || $32 || a.attnum), $33, c.oid::int8, $34, nc.nspname, $35, c.relname, $36, a.attnum, $37, a.attname, $38, case when a.atthasdef then pg_get_expr(ad.adbin, ad.adrelid) else $39 end, $40, case when t.typtype = $41 then case when bt.typelem <> $42::oid and bt.typlen = $43 then $44 when nbt.nspname = $45 then format_type(t.typbasetype, $46) else $47 end else case when t.typelem <> $48::oid and t.typlen = $49 then $50 when nt.nspname = $51 then format_type(a.atttypid, $52) else $53 end end, $54, case when t.typtype = $55 then case when nt.nspname <> $56 then concat(nt.nspname, $57, coalesce(bt.typname, t.typname)) else coalesce(bt.typname, t.typname) end else coalesce(bt.typname, t.typname) end, $58, a.attidentity in ($59, $60), $61, case a.attidentity when $62 then $63 when $64 then $65 else $66 end, $67, a.attgenerated in ($68), $69, not (a.attnotnull or t.typtype = $70 and t.typnotnull), $71, ( b.relkind in ($72, $73) or (b.relkind in ($74, $75) and pg_column_is_updatable(b.id, a.attnum, $76)) ), $77, uniques.table_id is not null, $78, check_constraints.definition, $79, col_description(c.oid, a.attnum), $80, coalesce( ( select jsonb_agg(e.enumlabel order by e.enumsortorder) from pg_catalog.pg_enum e where e.enumtypid = coalesce(bt.oid, t.oid) or e.enumtypid = coalesce(bt.typelem, t.typelem) ), $81::jsonb ) ) order by a.attnum) as columns from pg_attribute a join base_table_info b on a.attrelid = b.id join pg_class c on a.attrelid = c.oid join pg_namespace nc on c.relnamespace = nc.oid left join pg_attrdef ad on (a.attrelid = ad.adrelid and a.attnum = ad.adnum) join pg_type t on a.atttypid = t.oid join pg_namespace nt on t.typnamespace = nt.oid left join pg_type bt on (t.typtype = $82 and t.typbasetype = bt.oid) left join pg_namespace nbt on bt.typnamespace = nbt.oid left join ( select conrelid as table_id, conkey[$83] as ordinal_position from pg_catalog.pg_constraint where contype = $84 and cardinality(conkey) = $85 group by conrelid, conkey[1] ) as uniques on uniques.table_id = a.attrelid and uniques.ordinal_position = a.attnum left join ( select distinct on (conrelid, conkey[1]) conrelid as table_id, conkey[$86] as ordinal_position, substring( pg_get_constraintdef(oid, $87), $88, length(pg_get_constraintdef(oid, $89)) - $90 ) as definition from pg_constraint where contype = $91 and cardinality(conkey) = $92 order by conrelid, conkey[1], oid asc ) as check_constraints on check_constraints.table_id = a.attrelid and check_constraints.ordinal_position = a.attnum where a.attnum > $93 and not a.attisdropped group by a.attrelid ) select case b.relkind when $94 then jsonb_build_object( $95, b.relkind, $96, b.id, $97, b.schema, $98, b.name, $99, b.rls_enabled, $100, b.rls_forced, $101, ts.replica_identity, $102, ts.bytes, $103, ts.size, $104, ts.live_rows_estimate, $105, ts.dead_rows_estimate, $106, b.comment, $107, coalesce(pk.primary_keys, $108::jsonb), $109, coalesce( (select jsonb_agg(r.rel_info) from relationships r where r.source_id = b.id or r.target_id = b.id), $110::jsonb ), $111, coalesce(c.columns, $112::jsonb) ) when $113 then jsonb_build_object( $114, b.relkind, $115, b.id, $116, b.schema, $117, b.name, $118, b.rls_enabled, $119, b.rls_forced, $120, ts.replica_identity, $121, ts.bytes, $122, ts.size, $123, ts.live_rows_estimate, $124, ts.dead_rows_estimate, $125, b.comment, $126, coalesce(pk.primary_keys, $127::jsonb), $128, coalesce( (select jsonb_agg(r.rel_info) from relationships r where r.source_id = b.id or r.target_id = b.id), $129::jsonb ), $130, coalesce(c.columns, $131::jsonb) ) when $132 then jsonb_build_object( $133, b.relkind, $134, b.id, $135, b.schema, $136, b.name, $137, (pg_relation_is_updatable(b.id, $138) & $139) = $140, $141, b.comment, $142, coalesce(c.columns, $143::jsonb) ) when $144 then jsonb_build_object( $145, b.relkind, $146, b.id, $147, b.schema, $148, b.name, $149, $150, $151, b.comment, $152, coalesce(c.columns, $153::jsonb) ) when $154 then jsonb_build_object( $155, b.relkind, $156, b.id, $157, b.schema, $158, b.name, $159, b.comment, $160, coalesce(c.columns, $161::jsonb) ) end as entity from base_table_info b left join table_stats ts on b.id = ts.id left join primary_keys pk on b.id = pk.table_id left join columns c on b.id = c.table_id",
+    "calls": 501,
+    "total_time": 3469.723952,
+    "prop_total_time": "2.0%"
+  },
+  {
+    "rolname": "authenticator",
+    "query": "-- Recursively get the base types of domains\n  WITH\n  base_types AS (\n    WITH RECURSIVE\n    recurse AS (\n      SELECT\n        oid,\n        typbasetype,\n        COALESCE(NULLIF(typbasetype, $3), oid) AS base\n      FROM pg_type\n      UNION\n      SELECT\n        t.oid,\n        b.typbasetype,\n        COALESCE(NULLIF(b.typbasetype, $4), b.oid) AS base\n      FROM recurse t\n      JOIN pg_type b ON t.typbasetype = b.oid\n    )\n    SELECT\n      oid,\n      base\n    FROM recurse\n    WHERE typbasetype = $5\n  ),\n  arguments AS (\n    SELECT\n      oid,\n      array_agg((\n        COALESCE(name, $6), -- name\n        type::regtype::text, -- type\n        CASE type\n          WHEN $7::regtype THEN $8\n          WHEN $9::regtype THEN $10\n          WHEN $11::regtype THEN $12\n          WHEN $13::regtype THEN $14\n          ELSE type::regtype::text\n        END, -- convert types that ignore the lenth and accept any value till maximum size\n        idx <= (pronargs - pronargdefaults), -- is_required\n        COALESCE(mode = $15, $16) -- is_variadic\n      ) ORDER BY idx) AS args,\n      CASE COUNT(*) - COUNT(name) -- number of unnamed arguments\n        WHEN $17 THEN $18\n        WHEN $19 THEN (array_agg(type))[$20] IN ($21::regtype, $22::regtype, $23::regtype, $24::regtype, $25::regtype)\n        ELSE $26\n      END AS callable\n    FROM pg_proc,\n         unnest(proargnames, proargtypes, proargmodes)\n           WITH ORDINALITY AS _ (name, type, mode, idx)\n    WHERE type IS NOT NULL -- only input arguments\n    GROUP BY oid\n  )\n  SELECT\n    pn.nspname AS proc_schema,\n    p.proname AS proc_name,\n    d.description AS proc_description,\n    COALESCE(a.args, $27) AS args,\n    tn.nspname AS schema,\n    COALESCE(comp.relname, t.typname) AS name,\n    p.proretset AS rettype_is_setof,\n    (t.typtype = $28\n     -- if any TABLE, INOUT or OUT arguments present, treat as composite\n     or COALESCE(proargmodes::text[] && $29, $30)\n    ) AS rettype_is_composite,\n    bt.oid <> bt.base as rettype_is_composite_alias,\n    p.provolatile,\n    p.provariadic > $31 as hasvariadic,\n    lower((regexp_split_to_array((regexp_split_to_array(iso_config, $32))[$33], $34))[$35]) AS transaction_isolation_level,\n    coalesce(func_settings.kvs, $36) as kvs\n  FROM pg_proc p\n  LEFT JOIN arguments a ON a.oid = p.oid\n  JOIN pg_namespace pn ON pn.oid = p.pronamespace\n  JOIN base_types bt ON bt.oid = p.prorettype\n  JOIN pg_type t ON t.oid = bt.base\n  JOIN pg_namespace tn ON tn.oid = t.typnamespace\n  LEFT JOIN pg_class comp ON comp.oid = t.typrelid\n  LEFT JOIN pg_description as d ON d.objoid = p.oid\n  LEFT JOIN LATERAL unnest(proconfig) iso_config ON iso_config LIKE $37\n  LEFT JOIN LATERAL (\n    SELECT\n      array_agg(row(\n        substr(setting, $38, strpos(setting, $39) - $40),\n        substr(setting, strpos(setting, $41) + $42)\n      )) as kvs\n    FROM unnest(proconfig) setting\n    WHERE setting ~ ANY($2)\n  ) func_settings ON $43\n  WHERE t.oid <> $44::regtype AND COALESCE(a.callable, $45)\nAND prokind = $46 AND pn.nspname = ANY($1)",
+    "calls": 81,
+    "total_time": 1848.363583,
+    "prop_total_time": "1.1%"
+  },
+  {
+    "rolname": "supabase_admin",
+    "query": "CREATE TABLE IF NOT EXISTS \"realtime\".\"schema_migrations\" (\"version\" bigint, \"inserted_at\" timestamp(0), PRIMARY KEY (\"version\"))",
+    "calls": 46,
+    "total_time": 1840.625299,
+    "prop_total_time": "1.1%"
+  },
+  {
+    "rolname": "postgres",
+    "query": "with tables as (SELECT\n  c.oid :: int8 AS id,\n  nc.nspname AS schema,\n  c.relname AS name,\n  c.relrowsecurity AS rls_enabled,\n  c.relforcerowsecurity AS rls_forced,\n  CASE\n    WHEN c.relreplident = $1 THEN $2\n    WHEN c.relreplident = $3 THEN $4\n    WHEN c.relreplident = $5 THEN $6\n    ELSE $7\n  END AS replica_identity,\n  pg_total_relation_size(format($8, nc.nspname, c.relname)) :: int8 AS bytes,\n  pg_size_pretty(\n    pg_total_relation_size(format($9, nc.nspname, c.relname))\n  ) AS size,\n  pg_stat_get_live_tuples(c.oid) AS live_rows_estimate,\n  pg_stat_get_dead_tuples(c.oid) AS dead_rows_estimate,\n  obj_description(c.oid) AS comment,\n  coalesce(pk.primary_keys, $10) as primary_keys,\n  coalesce(\n    jsonb_agg(relationships) filter (where relationships is not null),\n    $11\n  ) as relationships\nFROM\n  pg_namespace nc\n  JOIN pg_class c ON nc.oid = c.relnamespace\n  left join (\n    select\n      table_id,\n      jsonb_agg(_pk.*) as primary_keys\n    from (\n      select\n        n.nspname as schema,\n        c.relname as table_name,\n        a.attname as name,\n        c.oid :: int8 as table_id\n      from\n        pg_index i,\n        pg_class c,\n        pg_attribute a,\n        pg_namespace n\n      where\n        i.indrelid = c.oid\n        and c.relnamespace = n.oid\n        and a.attrelid = c.oid\n        and a.attnum = any (i.indkey)\n        and i.indisprimary\n    ) as _pk\n    group by table_id\n  ) as pk\n  on pk.table_id = c.oid\n  left join (\n    select\n      c.oid :: int8 as id,\n      c.conname as constraint_name,\n      nsa.nspname as source_schema,\n      csa.relname as source_table_name,\n      sa.attname as source_column_name,\n      nta.nspname as target_table_schema,\n      cta.relname as target_table_name,\n      ta.attname as target_column_name\n    from\n      pg_constraint c\n    join (\n      pg_attribute sa\n      join pg_class csa on sa.attrelid = csa.oid\n      join pg_namespace nsa on csa.relnamespace = nsa.oid\n    ) on sa.attrelid = c.conrelid and sa.attnum = any (c.conkey)\n    join (\n      pg_attribute ta\n      join pg_class cta on ta.attrelid = cta.oid\n      join pg_namespace nta on cta.relnamespace = nta.oid\n    ) on ta.attrelid = c.confrelid and ta.attnum = any (c.confkey)\n    where\n      c.contype = $12\n  ) as relationships\n  on (relationships.source_schema = nc.nspname and relationships.source_table_name = c.relname)\n  or (relationships.target_table_schema = nc.nspname and relationships.target_table_name = c.relname)\nWHERE\n  c.relkind IN ($13, $14)\n  AND NOT pg_is_other_temp_schema(nc.oid)\n  AND (\n    pg_has_role(c.relowner, $15)\n    OR has_table_privilege(\n      c.oid,\n      $16\n    )\n    OR has_any_column_privilege(c.oid, $17)\n  )\ngroup by\n  c.oid,\n  c.relname,\n  c.relrowsecurity,\n  c.relforcerowsecurity,\n  c.relreplident,\n  nc.nspname,\n  pk.primary_keys\n)\n  \nselect\n  *\n  \nfrom tables where schema IN ($18)",
+    "calls": 76,
+    "total_time": 1688.199201,
+    "prop_total_time": "1.0%"
+  },
+  {
+    "rolname": "postgres",
+    "query": "SELECT\n  e.name,\n  n.nspname AS schema,\n  e.default_version,\n  x.extversion AS installed_version,\n  e.comment\nFROM\n  pg_available_extensions() e(name, default_version, comment)\n  LEFT JOIN pg_extension x ON e.name = x.extname\n  LEFT JOIN pg_namespace n ON x.extnamespace = n.oid",
+    "calls": 9,
+    "total_time": 1108.457047,
+    "prop_total_time": "0.6%"
+  },
+  {
+    "rolname": "supabase_auth_admin",
+    "query": "INSERT INTO \"refresh_tokens\" (\"created_at\", \"instance_id\", \"parent\", \"revoked\", \"session_id\", \"token\", \"updated_at\", \"user_id\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8) returning id",
+    "calls": 228,
+    "total_time": 1082.362678,
+    "prop_total_time": "0.6%"
+  },
+  {
+    "rolname": "supabase_auth_admin",
+    "query": "INSERT INTO \"sessions\" (\"aal\", \"created_at\", \"factor_id\", \"id\", \"ip\", \"not_after\", \"refreshed_at\", \"tag\", \"updated_at\", \"user_agent\", \"user_id\") VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+    "calls": 186,
+    "total_time": 646.221861000001,
+    "prop_total_time": "0.4%"
+  },
+  {
+    "rolname": "postgres",
+    "query": "select\n  t.oid::int8 as id,\n  t.typname as name,\n  n.nspname as schema,\n  format_type (t.oid, $1) as format,\n  coalesce(t_enums.enums, $2) as enums,\n  coalesce(t_attributes.attributes, $3) as attributes,\n  obj_description (t.oid, $4) as comment\nfrom\n  pg_type t\n  left join pg_namespace n on n.oid = t.typnamespace\n  left join (\n    select\n      enumtypid,\n      jsonb_agg(enumlabel order by enumsortorder) as enums\n    from\n      pg_enum\n    group by\n      enumtypid\n  ) as t_enums on t_enums.enumtypid = t.oid\n  left join (\n    select\n      oid,\n      jsonb_agg(\n        jsonb_build_object($5, a.attname, $6, a.atttypid::int8)\n        order by a.attnum asc\n      ) as attributes\n    from\n      pg_class c\n      join pg_attribute a on a.attrelid = c.oid\n    where\n      c.relkind = $7 and not a.attisdropped\n    group by\n      c.oid\n  ) as t_attributes on t_attributes.oid = t.typrelid\n\n    where\n      (\n        t.typrelid = $8\n        or (\n          select\n            c.relkind = $9\n          from\n            pg_class c\n          where\n            c.oid = t.typrelid\n        )\n      )\n     and not exists (\n                 select\n                 from\n                   pg_type el\n                 where\n                   el.oid = t.typelem\n                   and el.typarray = t.oid\n               ) and n.nspname NOT IN ($10,$11,$12)",
+    "calls": 280,
+    "total_time": 637.185285,
+    "prop_total_time": "0.4%"
+  },
+  {
+    "rolname": "supabase_auth_admin",
+    "query": "INSERT INTO \"audit_log_entries\" (\"created_at\", \"id\", \"instance_id\", \"ip_address\", \"payload\") VALUES ($1, $2, $3, $4, $5)",
+    "calls": 294,
+    "total_time": 562.392942,
+    "prop_total_time": "0.3%"
+  },
+  {
+    "rolname": "authenticator",
+    "query": "SELECT current_setting($1)::integer, current_setting($2), version()",
+    "calls": 162,
+    "total_time": 562.369681,
+    "prop_total_time": "0.3%"
+  },
+  {
+    "rolname": "postgres",
+    "query": "with records as (\n  select\n    c.oid::int8 as \"id\",\n    case c.relkind\n      when $1 then pg_temp.pg_get_tabledef(\n        concat(nc.nspname),\n        concat(c.relname),\n        $2,\n        $3,\n        $4\n      )\n      when $5 then concat(\n        $6, concat(nc.nspname, $7, c.relname), $8,\n        pg_get_viewdef(concat(nc.nspname, $9, c.relname), $10)\n      )\n      when $11 then concat(\n        $12, concat(nc.nspname, $13, c.relname), $14,\n        pg_get_viewdef(concat(nc.nspname, $15, c.relname), $16)\n      )\n      when $17 then concat($18, nc.nspname, $19, c.relname, $20)\n      when $21 then pg_temp.pg_get_tabledef(\n        concat(nc.nspname),\n        concat(c.relname),\n        $22,\n        $23,\n        $24\n      )\n    end as \"sql\"\n  from\n    pg_namespace nc\n    join pg_class c on nc.oid = c.relnamespace\n  where\n    c.relkind in ($25, $26, $27, $28, $29)\n    and not pg_is_other_temp_schema(nc.oid)\n    and (\n      pg_has_role(c.relowner, $30)\n      or has_table_privilege(\n        c.oid,\n        $31\n      )\n      or has_any_column_privilege(c.oid, $32)\n    )\n    and nc.nspname IN ($33)\n  order by c.relname asc\n  limit $34\n  offset $35\n)\nselect\n  jsonb_build_object(\n    $36, coalesce(jsonb_agg(\n      jsonb_build_object(\n        $37, r.id,\n        $38, r.sql\n      )\n    ), $39::jsonb)\n  ) \"data\"\nfrom records r",
+    "calls": 1,
+    "total_time": 519.8631,
+    "prop_total_time": "0.3%"
+  },
+  {
+    "rolname": "service_role",
+    "query": "WITH pgrst_source AS (UPDATE \"public\".\"users\" SET \"last_login\" = \"pgrst_body\".\"last_login\" FROM (SELECT $1 AS json_data) pgrst_payload, LATERAL (SELECT \"last_login\" FROM json_to_record(pgrst_payload.json_data) AS _(\"last_login\" timestamp with time zone) ) pgrst_body  WHERE  \"public\".\"users\".\"id\" = $2 RETURNING \"public\".\"users\".*) SELECT $3 AS total_result_set, pg_catalog.count(_postgrest_t) AS page_total, array[]::text[] AS header, coalesce(json_agg(_postgrest_t), $4) AS body, nullif(current_setting($5, $6), $7) AS response_headers, nullif(current_setting($8, $9), $10) AS response_status, $11 AS response_inserted FROM (SELECT \"users\".* FROM \"pgrst_source\" AS \"users\"     ) _postgrest_t",
+    "calls": 2844,
+    "total_time": 494.2079,
+    "prop_total_time": "0.3%"
+  },
+  {
+    "rolname": "authenticated",
+    "query": "select set_config('search_path', $1, true), set_config($2, $3, true), set_config('role', $4, true), set_config('request.jwt.claims', $5, true), set_config('request.method', $6, true), set_config('request.path', $7, true), set_config('request.headers', $8, true), set_config('request.cookies', $9, true)",
+    "calls": 3533,
+    "total_time": 472.01625,
+    "prop_total_time": "0.3%"
+  },
+  {
+    "rolname": "supabase_auth_admin",
+    "query": "SELECT users.aud, users.banned_until, users.confirmation_sent_at, users.confirmation_token, users.confirmed_at, users.created_at, users.deleted_at, users.email, users.email_change, users.email_change_confirm_status, users.email_change_sent_at, users.email_change_token_current, users.email_change_token_new, users.email_confirmed_at, users.encrypted_password, users.id, users.instance_id, users.invited_at, users.is_anonymous, users.is_sso_user, users.last_sign_in_at, users.phone, users.phone_change, users.phone_change_sent_at, users.phone_change_token, users.phone_confirmed_at, users.raw_app_meta_data, users.raw_user_meta_data, users.reauthentication_sent_at, users.reauthentication_token, users.recovery_sent_at, users.recovery_token, users.role, users.updated_at FROM users AS users WHERE instance_id = $1 and LOWER(email) = $2 and aud = $3 and is_sso_user = $4 LIMIT $5",
+    "calls": 226,
+    "total_time": 463.866152,
+    "prop_total_time": "0.3%"
+  },
+  {
+    "rolname": "supabase_admin",
+    "query": "SELECT t.oid, t.typname, t.typsend, t.typreceive, t.typoutput, t.typinput,\n       coalesce(d.typelem, t.typelem), coalesce(r.rngsubtype, $1), ARRAY (\n  SELECT a.atttypid\n  FROM pg_attribute AS a\n  WHERE a.attrelid = t.typrelid AND a.attnum > $2 AND NOT a.attisdropped\n  ORDER BY a.attnum\n)\n\nFROM pg_type AS t\nLEFT JOIN pg_type AS d ON t.typbasetype = d.oid\nLEFT JOIN pg_range AS r ON r.rngtypid = t.oid OR r.rngmultitypid = t.oid OR (t.typbasetype <> $3 AND r.rngtypid = t.typbasetype)\nWHERE (t.typrelid = $4)\nAND (t.typelem = $5 OR NOT EXISTS (SELECT $6 FROM pg_catalog.pg_type s WHERE s.typrelid != $7 AND s.oid = t.typelem))",
+    "calls": 44,
+    "total_time": 444.189621,
+    "prop_total_time": "0.3%"
+  },
+  {
+    "rolname": "authenticator",
+    "query": "with\n      role_setting as (\n        select r.rolname, unnest(r.rolconfig) as setting\n        from pg_auth_members m\n        join pg_roles r on r.oid = m.roleid\n        where member = current_user::regrole::oid\n      ),\n      kv_settings AS (\n        SELECT\n          rolname,\n          substr(setting, $1, strpos(setting, $2) - $3) as key,\n          lower(substr(setting, strpos(setting, $4) + $5)) as value\n        FROM role_setting\n      ),\n      iso_setting AS (\n        SELECT rolname, value\n        FROM kv_settings\n        WHERE key = $6\n      )\n      select\n        kv.rolname,\n        i.value as iso_lvl,\n        coalesce(array_agg(row(kv.key, kv.value)) filter (where key <> $7), $8) as role_settings\n      from kv_settings kv\n      join pg_settings ps on ps.name = kv.key and (ps.context = $9 or has_parameter_privilege(current_user::regrole::oid, ps.name, $10)) \n      left join iso_setting i on i.rolname = kv.rolname\n      group by kv.rolname, i.value",
+    "calls": 81,
+    "total_time": 433.12444,
+    "prop_total_time": "0.3%"
+  }
+]
