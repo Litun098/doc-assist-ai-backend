@@ -47,7 +47,7 @@ sequenceDiagram
     Frontend->>sessionStorage: Store session ID
 
     User->>Frontend: Upload document to session
-    Frontend->>Backend: POST /api/documents?session_id={session_id}
+    Frontend->>Backend: POST /api/documents/upload?session_id={session_id}
     Backend->>Wasabi: Store raw document
     Backend->>Supabase: Create document record (status: processing)
     Backend->>Supabase: Associate document with session
@@ -102,7 +102,7 @@ sequenceDiagram
 
 | Data Type | Storage System | Purpose |
 |-----------|----------------|---------|
-| Auth token | localStorage | Persistent authentication |
+| Auth token | Cookies | Secure authentication |
 | Current session | sessionStorage | Active session data |
 | Recent messages | sessionStorage | Current conversation context |
 | Document metadata | sessionStorage | Document info for current session |

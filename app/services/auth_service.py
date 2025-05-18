@@ -143,34 +143,50 @@ class AuthService:
                     "updated_at": datetime.now().isoformat(),
                     "last_login": datetime.now().isoformat()
                 }
-                try:
-                    # Try using service role key first to avoid RLS issues
-                    if settings.SUPABASE_SERVICE_KEY:
-                        try:
-                            logger.info(f"Inserting user data using service role for: {user.user.id}")
-                            service_supabase = create_client(
-                                supabase_url=settings.SUPABASE_URL,
-                                supabase_key=settings.SUPABASE_SERVICE_KEY
-                            )
-                            service_supabase.table("users").insert(user_data).execute()
-                            logger.info(f"User data inserted successfully using service role for: {user.user.id}")
-                        except Exception as service_error:
-                            logger.error(f"Error inserting user data using service role: {str(service_error)}")
-                            # Fall back to regular key
-                            logger.info(f"Falling back to regular key for inserting user data for: {user.user.id}")
-                            self.supabase.table("users").insert(user_data).execute()
-                            logger.info(f"User data inserted successfully for: {user.user.id}")
-                    else:
-                        # No service key available, use regular key
+
+                # First check if user already exists to avoid duplicate key error
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        service_supabase = create_client(
+                            supabase_url=settings.SUPABASE_URL,
+                            supabase_key=settings.SUPABASE_SERVICE_KEY
+                        )
+                        # Check if user exists
+                        check_response = service_supabase.table("users").select("id").eq("id", user.user.id).execute()
+
+                        if check_response.data and len(check_response.data) > 0:
+                            logger.info(f"User already exists in database, skipping insert for: {user.user.id}")
+                            # Just update the last_login time
+                            service_supabase.table("users").update({"last_login": datetime.now().isoformat()}).eq("id", user.user.id).execute()
+                            logger.info(f"Last login updated for existing user: {user.user.id}")
+                            return check_response.data[0]
+
+                        # User doesn't exist, insert new record
+                        logger.info(f"Inserting user data using service role for: {user.user.id}")
+                        service_supabase.table("users").insert(user_data).execute()
+                        logger.info(f"User data inserted successfully using service role for: {user.user.id}")
+                    except Exception as service_error:
+                        logger.error(f"Error with service role operation: {str(service_error)}")
+                        # Continue with authentication despite the error
+                        logger.info(f"Continuing with authentication despite the error for: {user.user.id}")
+                else:
+                    # No service key available, use regular key with caution
+                    try:
+                        logger.info(f"Checking if user exists before inserting for: {user.user.id}")
+                        check_response = self.supabase.table("users").select("id").eq("id", user.user.id).execute()
+
+                        if check_response.data and len(check_response.data) > 0:
+                            logger.info(f"User already exists in database, skipping insert for: {user.user.id}")
+                            return check_response.data[0]
+
                         logger.info(f"Inserting user data into database for: {user.user.id}")
                         self.supabase.table("users").insert(user_data).execute()
                         logger.info(f"User data inserted successfully for: {user.user.id}")
-                except Exception as insert_error:
-                    import traceback
-                    logger.error(f"Error inserting user data during authentication: {str(insert_error)}")
-                    logger.error(f"Traceback: {traceback.format_exc()}")
-                    logger.info(f"Continuing with authentication despite the error for: {user.user.id}")
-                    # Continue with authentication despite the error
+                    except Exception as insert_error:
+                        logger.error(f"Error during user data operation: {str(insert_error)}")
+                        # Continue with authentication despite the error
+                        logger.info(f"Continuing with authentication despite the error for: {user.user.id}")
+
                 return user_data
 
             # Update last login
@@ -418,30 +434,51 @@ class AuthService:
                     "updated_at": datetime.now().isoformat(),
                     "last_login": datetime.now().isoformat()
                 }
-                try:
-                    # Try using service role key first to avoid RLS issues
-                    if settings.SUPABASE_SERVICE_KEY:
-                        try:
-                            logger.info(f"Inserting user data using service role during login for user ID: {auth_response.user.id}")
-                            service_supabase = create_client(
-                                supabase_url=settings.SUPABASE_URL,
-                                supabase_key=settings.SUPABASE_SERVICE_KEY
-                            )
+
+                # First check if user already exists to avoid duplicate key error
+                if settings.SUPABASE_SERVICE_KEY:
+                    try:
+                        service_supabase = create_client(
+                            supabase_url=settings.SUPABASE_URL,
+                            supabase_key=settings.SUPABASE_SERVICE_KEY
+                        )
+                        # Check if user exists
+                        check_response = service_supabase.table("users").select("*").eq("id", auth_response.user.id).execute()
+
+                        if check_response.data and len(check_response.data) > 0:
+                            logger.info(f"User already exists in database, skipping insert during login for: {auth_response.user.id}")
+                            # Just update the last_login time
+                            service_supabase.table("users").update({"last_login": datetime.now().isoformat()}).eq("id", auth_response.user.id).execute()
+                            logger.info(f"Last login updated for existing user during login: {auth_response.user.id}")
+                            user_info = check_response.data[0]
+                        else:
+                            # User doesn't exist, insert new record
+                            logger.info(f"Inserting user data using service role during login for: {auth_response.user.id}")
                             service_supabase.table("users").insert(user_data).execute()
-                            logger.info(f"User data inserted successfully using service role during login for user ID: {auth_response.user.id}")
-                        except Exception as service_error:
-                            logger.error(f"Error inserting user data using service role during login: {str(service_error)}")
-                            # Fall back to regular key
-                            logger.info(f"Falling back to regular key for inserting user data during login for user ID: {auth_response.user.id}")
+                            logger.info(f"User data inserted successfully using service role during login for: {auth_response.user.id}")
+                            user_info = user_data
+                    except Exception as service_error:
+                        logger.error(f"Error with service role operation during login: {str(service_error)}")
+                        # Continue with login despite the error
+                        user_info = user_data
+                else:
+                    # No service key available, use regular key with caution
+                    try:
+                        logger.info(f"Checking if user exists before inserting during login for: {auth_response.user.id}")
+                        check_response = self.supabase.table("users").select("*").eq("id", auth_response.user.id).execute()
+
+                        if check_response.data and len(check_response.data) > 0:
+                            logger.info(f"User already exists in database, skipping insert during login for: {auth_response.user.id}")
+                            user_info = check_response.data[0]
+                        else:
+                            logger.info(f"Inserting user data during login for: {auth_response.user.id}")
                             self.supabase.table("users").insert(user_data).execute()
-                            logger.info(f"User data inserted successfully during login for user ID: {auth_response.user.id}")
-                    else:
-                        # No service key available, use regular key
-                        self.supabase.table("users").insert(user_data).execute()
-                except Exception as insert_error:
-                    logger.error(f"Error inserting user data during login: {str(insert_error)}")
-                    # Continue with login despite the error
-                user_info = user_data
+                            logger.info(f"User data inserted successfully during login for: {auth_response.user.id}")
+                            user_info = user_data
+                    except Exception as insert_error:
+                        logger.error(f"Error during user data operation in login: {str(insert_error)}")
+                        # Continue with login despite the error
+                        user_info = user_data
             else:
                 user_info = user_response.data[0]
                 # Update last login
