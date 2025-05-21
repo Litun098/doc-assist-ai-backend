@@ -48,14 +48,15 @@ except Exception as e:
     logger.error(f"Traceback: {traceback.format_exc()}")
     supabase = None
 
-# Cookie name for authentication
-AUTH_COOKIE_NAME = "auth_token"
+# Cookie names for authentication
+ACCESS_TOKEN_COOKIE_NAME = "auth_token"
+REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
 
 # Custom security scheme that supports both cookies and bearer tokens
 class CookieOrHeaderAuth:
     async def __call__(self, request: Request):
         # First try to get the token from the cookie
-        token = request.cookies.get(AUTH_COOKIE_NAME)
+        token = request.cookies.get(ACCESS_TOKEN_COOKIE_NAME)
 
         # If no cookie, try to get from Authorization header
         if not token:
@@ -384,6 +385,150 @@ class AuthService:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Registration error: {str(e)}"
+            )
+
+    async def generate_access_token(self, user_id: str) -> str:
+        """
+        Generate a new access token for a user.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            Access token
+        """
+        if not self.supabase:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication service is not available"
+            )
+
+        try:
+            # Get the user from Supabase Auth
+            user_response = self.supabase.table("users").select("*").eq("id", user_id).execute()
+
+            if not user_response.data:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+
+            # Create a session for the user
+            # Note: This is a workaround as Supabase doesn't provide a direct way to generate tokens
+            # In a production environment, you might want to use a custom JWT implementation
+            session_response = self.supabase.auth.admin.create_user({
+                "email": user_response.data[0]["email"],
+                "user_id": user_id,
+                "email_confirm": True
+            })
+
+            if not session_response or not hasattr(session_response, 'access_token'):
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to generate access token"
+                )
+
+            return session_response.access_token
+        except HTTPException:
+            # Re-raise HTTP exceptions
+            raise
+        except Exception as e:
+            logger.error(f"Error generating access token: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error generating access token: {str(e)}"
+            )
+
+    async def get_user_by_id(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get user information by ID.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            User information
+        """
+        if not self.supabase:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication service is not available"
+            )
+
+        try:
+            # Try using service role key first to bypass RLS
+            if settings.SUPABASE_SERVICE_KEY:
+                try:
+                    logger.info(f"Getting user by ID using service role for user ID: {user_id}")
+                    service_supabase = create_client(
+                        supabase_url=settings.SUPABASE_URL,
+                        supabase_key=settings.SUPABASE_SERVICE_KEY
+                    )
+                    user_response = service_supabase.table("users").select("*").eq("id", user_id).execute()
+
+                    if user_response.data and len(user_response.data) > 0:
+                        logger.info(f"User found using service role for user ID: {user_id}")
+                        return user_response.data[0]
+
+                    logger.warning(f"User not found using service role for user ID: {user_id}")
+                except Exception as service_error:
+                    logger.error(f"Error getting user by ID using service role: {str(service_error)}")
+                    # Fall back to regular key
+
+            # Fall back to regular key or if service key failed
+            logger.info(f"Getting user by ID using regular key for user ID: {user_id}")
+            user_response = self.supabase.table("users").select("*").eq("id", user_id).execute()
+
+            if not user_response.data:
+                # If user not found, create a minimal user record
+                logger.warning(f"User not found in database, creating minimal record for: {user_id}")
+
+                # Try to get user from auth
+                try:
+                    if settings.SUPABASE_SERVICE_KEY:
+                        service_supabase = create_client(
+                            supabase_url=settings.SUPABASE_URL,
+                            supabase_key=settings.SUPABASE_SERVICE_KEY
+                        )
+                        auth_user = service_supabase.auth.admin.get_user_by_id(user_id)
+
+                        if auth_user:
+                            # User exists in auth but not in our users table, create the record
+                            user_data = {
+                                "id": user_id,
+                                "email": auth_user.email,
+                                "full_name": auth_user.user_metadata.get("full_name", ""),
+                                "subscription_tier": "free",
+                                "created_at": datetime.now().isoformat(),
+                                "updated_at": datetime.now().isoformat(),
+                                "last_login": datetime.now().isoformat()
+                            }
+
+                            # Insert the user data
+                            service_supabase.table("users").insert(user_data).execute()
+                            logger.info(f"Created user record for auth user: {user_id}")
+                            return user_data
+                except Exception as auth_error:
+                    logger.error(f"Error getting/creating user from auth: {str(auth_error)}")
+
+                # If we still don't have a user, return a minimal record
+                minimal_user = {
+                    "id": user_id,
+                    "email": "",
+                    "full_name": "",
+                    "subscription_tier": "free"
+                }
+                return minimal_user
+
+            return user_response.data[0]
+        except HTTPException:
+            # Re-raise HTTP exceptions
+            raise
+        except Exception as e:
+            logger.error(f"Error getting user by ID: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error getting user by ID: {str(e)}"
             )
 
     async def login_user(self, email: str, password: str) -> Dict[str, Any]:

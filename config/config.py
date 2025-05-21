@@ -11,6 +11,7 @@ class Settings:
     APP_VERSION = os.getenv("APP_VERSION", "0.1.0")
     DEBUG = os.getenv("DEBUG", "True").lower() == "true"
     ENVIRONMENT = os.getenv("ENVIRONMENT", "development")
+    SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-for-jwt-signing")
 
     # API settings
     API_PREFIX = "/api"
@@ -56,6 +57,17 @@ class Settings:
     ALLOWED_EXTENSIONS = {
         "pdf", "docx", "doc", "xlsx", "xls", "pptx", "ppt", "txt"
     }
+
+    # Authentication settings
+    ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))  # 1 hour
+    REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))  # 7 days
+    TOKEN_BLACKLIST_ENABLED = os.getenv("TOKEN_BLACKLIST_ENABLED", "True").lower() == "true"
+
+    # Rate limiting settings
+    LOGIN_RATE_LIMIT = int(os.getenv("LOGIN_RATE_LIMIT", "5"))  # 5 attempts
+    LOGIN_RATE_LIMIT_WINDOW = int(os.getenv("LOGIN_RATE_LIMIT_WINDOW", "300"))  # 5 minutes (in seconds)
+    API_RATE_LIMIT = int(os.getenv("API_RATE_LIMIT", "100"))  # 100 requests
+    API_RATE_LIMIT_WINDOW = int(os.getenv("API_RATE_LIMIT_WINDOW", "60"))  # 1 minute (in seconds)
 
     # Chunking settings
     CHUNK_SIZE = 1000

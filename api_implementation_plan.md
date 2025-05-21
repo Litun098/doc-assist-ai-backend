@@ -121,6 +121,19 @@ export const authApi = {
   login: (email, password) =>
     axios.post('/api/auth/login', { email, password }),
 
+  // OAuth-compliant refresh token endpoint (recommended)
+  refreshToken: (refreshToken = null) => {
+    // If refresh token is provided, include it in the request body as fallback
+    const data = refreshToken ? { refresh_token: refreshToken } : {};
+    return axios.post('/api/auth/test-refresh-token', data, {
+      withCredentials: true // Important for cookie-based auth
+    });
+  },
+
+  // Legacy refresh token endpoint (requires valid access token)
+  legacyRefreshToken: (refreshToken) =>
+    axios.post('/api/auth/refresh-token', refreshToken ? { refresh_token: refreshToken } : {}),
+
   logout: () =>
     axios.post('/api/auth/logout'),
 
@@ -366,8 +379,10 @@ displayMessage(messageResponse.data);
 
 | Endpoint | Method | Description | Request Body | Response |
 |----------|--------|-------------|-------------|----------|
-| `/api/auth/register` | POST | Register a new user | `email`, `password`, `full_name` (optional) | User data with token |
-| `/api/auth/login` | POST | Login a user | `email`, `password` | User data with token |
+| `/api/auth/register` | POST | Register a new user | `email`, `password`, `full_name` (optional) | User data with access and refresh tokens |
+| `/api/auth/login` | POST | Login a user | `email`, `password` | User data with access and refresh tokens |
+| `/api/auth/test-refresh-token` | POST | Refresh access token (OAuth compliant) | Optional `refresh_token` in body (cookie preferred) | New access and refresh tokens with user data |
+| `/api/auth/refresh-token` | POST | Refresh access token (legacy) | Requires valid access token | New access and refresh tokens |
 | `/api/auth/me` | GET | Get current user info | None | User profile data |
 | `/api/auth/logout` | POST | Logout user | None | Success message |
 | `/api/auth/update-profile` | PUT | Update user profile | `full_name`, `email` | Updated user data |
@@ -424,34 +439,152 @@ The frontend should handle authentication properly to ensure these security meas
 3. Handle unauthorized errors appropriately
 4. Refresh tokens when needed
 
+## Enhanced Authentication Security
+
+The backend implements enhanced authentication security features:
+
+### Refresh Token Mechanism
+
+The backend provides a complete refresh token mechanism with two endpoints:
+
+1. `/api/auth/test-refresh-token` - The recommended endpoint that follows OAuth best practices:
+   - Extracts refresh token from HTTP-only cookies (preferred) or request body (fallback)
+   - Validates the refresh token against the database
+   - Uses multiple fallback methods for token generation:
+     - First tries Supabase's refresh_session method
+     - Falls back to manual JWT token generation if refresh_session fails
+     - Uses the original method as a last resort
+   - Includes comprehensive error handling and detailed logging
+   - Optionally rotates the refresh token for enhanced security
+   - Sets both tokens as secure HTTP-only cookies
+   - Returns the tokens and complete user information
+
+2. `/api/auth/refresh-token` - The original implementation (maintained for backward compatibility):
+   - Requires an active access token (through the `get_current_user` dependency)
+   - Creates a new refresh token
+   - Generates a new access token
+   - Sets both tokens as cookies
+   - Returns the tokens and user information
+
+Both endpoints provide:
+- Secure HTTP-only cookies for token storage
+- Token expiration times in the response
+- Complete user information in the response
+
+### Security Headers
+
+The backend sets the following security headers on all responses:
+
+1. Content-Security-Policy
+2. X-Content-Type-Options
+3. Referrer-Policy
+4. X-XSS-Protection
+5. X-Frame-Options
+6. Strict-Transport-Security (in production)
+7. Permissions-Policy
+
+### Rate Limiting and Brute Force Protection
+
+The backend implements rate limiting for authentication endpoints:
+
+1. Login and register endpoints have stricter rate limits
+2. All API endpoints have general rate limits
+3. Rate limit headers are included in responses
+4. Security events are logged
+
+### Token Management
+
+The backend provides token management features:
+
+1. Token revocation on logout
+2. Token blacklisting for revoked tokens
+3. Automatic cleanup of expired tokens
+
 ## Error Handling
 
-Implement proper error handling for API calls:
+Implement proper error handling for API calls, including token refresh:
 
 ```javascript
-try {
-  const response = await chatApi.sendMessage(sessionId, message);
-  // Handle success
-} catch (error) {
-  if (error.response) {
-    // The request was made and the server responded with a status code
-    // that falls out of the range of 2xx
-    if (error.response.status === 401) {
-      // Handle authentication error
-      redirectToLogin();
-    } else if (error.response.status === 403) {
-      // Handle permission error
-      showPermissionError();
-    } else {
-      // Handle other server errors
-      showErrorMessage(error.response.data.detail || "Server error");
+// Create an axios instance with interceptors for token refresh
+const api = axios.create({
+  baseURL: '/api',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Add response interceptor for handling token expiration
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const originalRequest = error.config;
+
+    // If the error is 401 Unauthorized and we haven't already tried to refresh the token
+    if (error.response.status === 401 && !originalRequest._retry) {
+      originalRequest._retry = true;
+
+      try {
+        // Try to refresh the token using the OAuth-compliant endpoint
+        // First try with cookies (preferred method)
+        let refreshResponse;
+        try {
+          refreshResponse = await axios.post('/api/auth/test-refresh-token', {}, {
+            withCredentials: true // Important: This enables sending cookies with the request
+          });
+        } catch (cookieError) {
+          // If cookie approach fails, try with refresh token in body as fallback
+          // This might happen if cookies are not properly set or accessible
+          const storedRefreshToken = localStorage.getItem('refresh_token');
+          if (storedRefreshToken) {
+            refreshResponse = await axios.post('/api/auth/test-refresh-token', {
+              refresh_token: storedRefreshToken
+            }, {
+              withCredentials: true
+            });
+          } else {
+            // No refresh token available, rethrow the original error
+            throw cookieError;
+          }
+        }
+
+        // If token refresh was successful, retry the original request
+        if (refreshResponse.data.access_token) {
+          // Store the new tokens if needed (for non-cookie use cases)
+          localStorage.setItem('token', refreshResponse.data.access_token);
+
+          // Update the authorization header
+          originalRequest.headers.Authorization = `Bearer ${refreshResponse.data.access_token}`;
+
+          // Retry the original request
+          return axios(originalRequest);
+        }
+      } catch (refreshError) {
+        // If token refresh fails, redirect to login
+        redirectToLogin();
+        return Promise.reject(refreshError);
+      }
     }
-  } else if (error.request) {
-    // The request was made but no response was received
-    showErrorMessage("Network error. Please check your connection.");
-  } else {
-    // Something happened in setting up the request
-    showErrorMessage("An error occurred. Please try again.");
+
+    // Handle other errors
+    if (error.response) {
+      // The request was made and the server responded with a status code
+      // that falls out of the range of 2xx
+      if (error.response.status === 403) {
+        // Handle permission error
+        showPermissionError();
+      } else {
+        // Handle other server errors
+        showErrorMessage(error.response.data.detail || "Server error");
+      }
+    } else if (error.request) {
+      // The request was made but no response was received
+      showErrorMessage("Network error. Please check your connection.");
+    } else {
+      // Something happened in setting up the request
+      showErrorMessage("An error occurred. Please try again.");
+    }
+
+    return Promise.reject(error);
   }
-}
+);
 ```

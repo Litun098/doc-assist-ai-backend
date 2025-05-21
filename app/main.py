@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from app.api.api import api_router
+from app.middleware import add_security_headers_middleware, add_rate_limit_middleware
 from config.config import settings
 
 # Configure logging
@@ -79,6 +80,12 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization", "Accept"],
     expose_headers=["Set-Cookie"],
 )
+
+# Add security headers middleware
+add_security_headers_middleware(app)
+
+# Add rate limiting middleware
+add_rate_limit_middleware(app)
 
 # Include API router
 app.include_router(api_router, prefix=settings.API_PREFIX)
