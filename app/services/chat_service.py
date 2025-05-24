@@ -542,10 +542,14 @@ class ChatService:
 
                 document_ids = [doc["document_id"] for doc in doc_response.data]
 
+                # Get the session data to include created_at
+                session_data = session_response.data[0]
+
                 return {
                     "session_id": session_id,
                     "name": name,
                     "document_ids": document_ids,
+                    "created_at": session_data["created_at"],
                     "updated_at": datetime.now().isoformat()
                 }
 
