@@ -37,13 +37,46 @@ async def lifespan(_app: FastAPI):
 
     # Shutdown: Clean up resources
     try:
-        from app.services.llama_index_service import llama_index_service
-        if hasattr(llama_index_service, 'weaviate_client') and llama_index_service.weaviate_client:
-            try:
-                llama_index_service.weaviate_client.close()
-                logger.info("Weaviate connection closed successfully")
-            except Exception as e:
-                logger.error(f"Error closing Weaviate connection: {str(e)}")
+        logger.info("Shutting down AnyDocAI server...")
+
+        # Close service connections
+        try:
+            # Close LlamaIndex service connections
+            from app.services.llama_index_service import llama_index_service
+            llama_index_service.close_connections()
+
+            # Close document processor connections
+            from app.services.document_processor import document_processor
+            document_processor.close_connections()
+
+            # Close RAG service connections
+            from app.services.rag_service import rag_service
+            rag_service.close_connections()
+
+            # Close embedder service connections
+            from app.services.embedder import embedder_service
+            embedder_service.close_connections()
+
+            logger.info("Service connections closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing service connections: {str(e)}")
+
+        # Close connection manager connections
+        try:
+            from app.utils.connection_manager import connection_manager
+            connection_manager.close_all_connections()
+            logger.info("Connection manager cleanup completed")
+        except Exception as e:
+            logger.error(f"Error in connection manager cleanup: {str(e)}")
+
+        # Final resource cleanup
+        try:
+            from app.utils.socket_cleanup import cleanup_all_resources
+            cleanup_all_resources()
+            logger.info("Final resource cleanup completed")
+        except Exception as e:
+            logger.error(f"Error in final resource cleanup: {str(e)}")
+
     except Exception as e:
         logger.error(f"Error during shutdown: {str(e)}")
 

@@ -72,7 +72,22 @@ async def lifespan(_app: FastAPI):
 
         # Close any remaining service connections
         try:
+            # Close LlamaIndex service connections
             from app.services.llama_index_service import llama_index_service
+            llama_index_service.close_connections()
+
+            # Close document processor connections
+            from app.services.document_processor import document_processor
+            document_processor.close_connections()
+
+            # Close RAG service connections
+            from app.services.rag_service import rag_service
+            rag_service.close_connections()
+
+            # Close embedder service connections
+            from app.services.embedder import embedder_service
+            embedder_service.close_connections()
+
             logger.info("Service connections closed successfully")
         except Exception as e:
             logger.error(f"Error closing service connections: {str(e)}")

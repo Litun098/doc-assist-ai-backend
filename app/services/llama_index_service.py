@@ -867,5 +867,19 @@ class LlamaIndexService:
         else:
             return FileType.UNKNOWN
 
+    def close_connections(self):
+        """Close all connections and clean up resources."""
+        try:
+            if self.weaviate_client:
+                logger.info("Closing Weaviate client connection...")
+                self.weaviate_client.close()
+                self.weaviate_client = None
+                logger.info("Weaviate client connection closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing Weaviate client: {str(e)}")
+
+        # Clear vector store reference
+        self.vector_store = None
+
 # Create a singleton instance
 llama_index_service = LlamaIndexService()

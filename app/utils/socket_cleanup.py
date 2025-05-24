@@ -211,23 +211,49 @@ def cleanup_all_resources():
     """
     Clean up all resources to prevent ResourceWarnings.
     """
-    # Clean up tracked sockets
-    socket_cleanup()
+    logger.info("Starting comprehensive resource cleanup...")
 
-    # Clean up httpx clients
-    import httpx
-    if hasattr(httpx, 'cleanup_clients'):
-        httpx.cleanup_clients()
+    try:
+        # Clean up tracked sockets
+        socket_cleanup()
 
-    # Clean up any remaining SSL sockets
-    cleanup_all_sockets()
+        # Clean up httpx clients
+        import httpx
+        if hasattr(httpx, 'cleanup_clients'):
+            httpx.cleanup_clients()
 
-    # Force garbage collection
-    gc.collect()
+        # Additional Weaviate cleanup
+        try:
+            import weaviate
+            # Force cleanup of any remaining Weaviate connections
+            if hasattr(weaviate, '_global_client_registry'):
+                registry = getattr(weaviate, '_global_client_registry', {})
+                for client_id, client in list(registry.items()):
+                    try:
+                        if hasattr(client, 'close'):
+                            client.close()
+                        del registry[client_id]
+                    except Exception as e:
+                        logger.debug(f"Error cleaning up Weaviate client {client_id}: {str(e)}")
+        except ImportError:
+            pass
+        except Exception as e:
+            logger.debug(f"Error in additional Weaviate cleanup: {str(e)}")
 
-    # Take a snapshot to check for leaks
-    snapshot = tracemalloc.take_snapshot()
-    top_stats = snapshot.statistics('lineno')
-    logger.debug("Top 10 memory allocations:")
-    for stat in top_stats[:10]:
-        logger.debug(f"{stat}")
+        # Clean up any remaining SSL sockets
+        cleanup_all_sockets()
+
+        # Force garbage collection multiple times to ensure cleanup
+        for _ in range(3):
+            gc.collect()
+
+        # Take a snapshot to check for leaks
+        snapshot = tracemalloc.take_snapshot()
+        top_stats = snapshot.statistics('lineno')
+        logger.debug("Top 10 memory allocations:")
+        for stat in top_stats[:10]:
+            logger.debug(f"{stat}")
+
+        logger.info("Resource cleanup completed")
+    except Exception as e:
+        logger.error(f"Error during resource cleanup: {str(e)}")

@@ -405,6 +405,17 @@ class EmbeddingService:
             logger.error(f"Error searching similar chunks: {str(e)}")
             return []
 
+    def close_connections(self):
+        """Close all connections and clean up resources."""
+        try:
+            if self.weaviate_client:
+                logger.info("Closing Weaviate client connection...")
+                self.weaviate_client.close()
+                self.weaviate_client = None
+                logger.info("Weaviate client connection closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing Weaviate client: {str(e)}")
+
 
 # Create a singleton instance
 embedder_service = EmbeddingService()

@@ -437,5 +437,19 @@ class DocumentProcessor:
             # Don't raise the exception to allow the process to continue
             # The document will be marked as processed even if some batches failed
 
+    def close_connections(self):
+        """Close all connections and clean up resources."""
+        try:
+            if self.weaviate_client:
+                logger.info("Closing Weaviate client connection...")
+                self.weaviate_client.close()
+                self.weaviate_client = None
+                logger.info("Weaviate client connection closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing Weaviate client: {str(e)}")
+
+        # Reset use_weaviate flag
+        self.use_weaviate = False
+
 # Create a singleton instance
 document_processor = DocumentProcessor()

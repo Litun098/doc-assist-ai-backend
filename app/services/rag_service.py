@@ -407,5 +407,21 @@ class RAGService:
                 "sources": []
             }
 
+    def close_connections(self):
+        """Close all connections and clean up resources."""
+        try:
+            if self.weaviate_client:
+                logger.info("Closing Weaviate client connection...")
+                self.weaviate_client.close()
+                self.weaviate_client = None
+                logger.info("Weaviate client connection closed successfully")
+        except Exception as e:
+            logger.error(f"Error closing Weaviate client: {str(e)}")
+
+        # Reset use_weaviate flag and clear caches
+        self.use_weaviate = False
+        self.query_engine_cache.clear()
+        self.chat_engine_cache.clear()
+
 # Create a singleton instance
 rag_service = RAGService()
