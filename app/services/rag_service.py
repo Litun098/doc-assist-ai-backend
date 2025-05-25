@@ -42,15 +42,40 @@ class RAGService:
 
         # Initialize Weaviate if configured
         if settings.WEAVIATE_URL and settings.WEAVIATE_API_KEY:
+            self._connect_to_weaviate_with_retry()
+
+        # Initialize LLM
+        self.llm = ChatOpenAI(
+            model=settings.DEFAULT_MODEL,
+            temperature=0.7,
+            api_key=settings.OPENAI_API_KEY
+        )
+
+        # Cache for query engines
+        self.query_engine_cache = {}
+        self.chat_engine_cache = {}
+
+    def _connect_to_weaviate_with_retry(self, max_retries: int = 3, retry_delay: float = 2.0):
+        """
+        Connect to Weaviate with retry logic.
+
+        Args:
+            max_retries: Maximum number of retry attempts
+            retry_delay: Delay between retries in seconds
+        """
+        import time
+
+        for attempt in range(max_retries + 1):
             try:
                 from weaviate.classes.init import Auth, AdditionalConfig, Timeout
+                import weaviate
 
                 # Make sure we're using the REST endpoint, not gRPC
                 weaviate_url = settings.WEAVIATE_URL
                 if not weaviate_url.startswith("https://"):
                     weaviate_url = f"https://{weaviate_url}"
 
-                logger.info(f"Connecting to Weaviate at {weaviate_url}")
+                logger.info(f"Connecting to Weaviate at {weaviate_url} (attempt {attempt + 1}/{max_retries + 1})")
                 self.weaviate_client = weaviate.connect_to_weaviate_cloud(
                     cluster_url=weaviate_url,
                     auth_credentials=Auth.api_key(settings.WEAVIATE_API_KEY),
@@ -63,22 +88,65 @@ class RAGService:
                         )
                     )
                 )
-                self.use_weaviate = True
-                logger.info("Using Weaviate for vector storage")
+
+                # Test the connection
+                try:
+                    # Try a simple operation to verify connection
+                    self.weaviate_client.collections.list_all()
+                    self.use_weaviate = True
+                    logger.info("Successfully connected to Weaviate for vector storage")
+                    return
+                except Exception as test_error:
+                    logger.warning(f"Weaviate connection test failed: {str(test_error)}")
+                    if self.weaviate_client:
+                        try:
+                            self.weaviate_client.close()
+                        except:
+                            pass
+                        self.weaviate_client = None
+                    raise test_error
+
             except Exception as e:
-                logger.error(f"Error connecting to Weaviate: {str(e)}")
-                logger.info("Falling back to in-memory storage")
+                logger.error(f"Error connecting to Weaviate (attempt {attempt + 1}): {str(e)}")
 
-        # Initialize LLM
-        self.llm = ChatOpenAI(
-            model=settings.DEFAULT_MODEL,
-            temperature=0.7,
-            api_key=settings.OPENAI_API_KEY
-        )
+                if attempt < max_retries:
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.5  # Exponential backoff
+                else:
+                    logger.error("Failed to connect to Weaviate after all retry attempts")
+                    logger.info("Falling back to in-memory storage")
+                    self.use_weaviate = False
+                    self.weaviate_client = None
 
-        # Cache for query engines
-        self.query_engine_cache = {}
-        self.chat_engine_cache = {}
+    def _check_weaviate_connection(self) -> bool:
+        """
+        Check if Weaviate connection is healthy and reconnect if needed.
+
+        Returns:
+            True if connection is healthy, False otherwise
+        """
+        if not self.use_weaviate or not self.weaviate_client:
+            return False
+
+        try:
+            # Test the connection with a simple operation
+            self.weaviate_client.collections.list_all()
+            return True
+        except Exception as e:
+            logger.warning(f"Weaviate connection check failed: {str(e)}")
+            logger.info("Attempting to reconnect to Weaviate...")
+
+            # Close the current connection
+            try:
+                if self.weaviate_client:
+                    self.weaviate_client.close()
+            except:
+                pass
+
+            # Try to reconnect
+            self._connect_to_weaviate_with_retry(max_retries=2, retry_delay=1.0)
+            return self.use_weaviate and self.weaviate_client is not None
 
     def get_vector_store(self, user_id: str) -> Any:
         """
@@ -92,7 +160,8 @@ class RAGService:
         """
         from llama_index.core.vector_stores import SimpleVectorStore
 
-        if self.use_weaviate and self.weaviate_client:
+        # Check Weaviate connection health before using it
+        if self._check_weaviate_connection():
             # Use Weaviate vector store
             try:
                 # Create a user-specific collection name
@@ -398,14 +467,64 @@ class RAGService:
 
         except Exception as e:
             logger.error(f"Error chatting with documents: {str(e)}")
+
+            # Provide a more helpful error message based on the error type
+            error_message = self._get_helpful_error_message(str(e), message)
+
             return {
-                "response": f"Error chatting with documents: {str(e)}",
+                "response": error_message,
                 "message": message,
                 "file_ids": file_ids or [],
                 "user_id": user_id,
                 "timestamp": datetime.now().isoformat(),
                 "sources": []
             }
+
+    def _get_helpful_error_message(self, error_str: str, user_message: str) -> str:
+        """
+        Generate a helpful error message based on the error type.
+
+        Args:
+            error_str: The original error string
+            user_message: The user's original message
+
+        Returns:
+            A helpful error message for the user
+        """
+        error_lower = error_str.lower()
+
+        if "connection" in error_lower and ("reset" in error_lower or "unavailable" in error_lower):
+            return (
+                "I'm currently experiencing connectivity issues with the document database. "
+                "This might be temporary - please try your question again in a moment. "
+                "If the issue persists, you can still ask general questions and I'll do my best to help!"
+            )
+        elif "weaviate" in error_lower or "vector" in error_lower:
+            return (
+                "I'm having trouble accessing your documents right now due to a database issue. "
+                "Please try again in a few moments. In the meantime, feel free to ask me general questions!"
+            )
+        elif "timeout" in error_lower:
+            return (
+                "The request took longer than expected to process. This might be due to high server load. "
+                "Please try asking your question again, or try rephrasing it to be more specific."
+            )
+        elif "no documents" in error_lower or "no chunks" in error_lower:
+            return (
+                "I couldn't find any relevant information in your uploaded documents for this question. "
+                "Try rephrasing your question or asking about different aspects of your documents. "
+                "You can also ask me to summarize the entire document to see what information is available."
+            )
+        else:
+            # Generic fallback with helpful suggestions
+            return (
+                f"I encountered an issue while processing your question: '{user_message}'. "
+                "This might be a temporary problem. Please try:\n"
+                "• Rephrasing your question\n"
+                "• Asking about a specific part of your document\n"
+                "• Trying again in a moment\n\n"
+                "I'm still here to help with general questions if needed!"
+            )
 
     def close_connections(self):
         """Close all connections and clean up resources."""

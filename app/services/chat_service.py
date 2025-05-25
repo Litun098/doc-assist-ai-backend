@@ -19,6 +19,16 @@ logger = logging.getLogger(__name__)
 # Import connection manager
 from app.utils.connection_manager import connection_manager
 
+# Import WebSocket manager for real-time updates
+def get_websocket_manager():
+    """Get WebSocket manager instance."""
+    try:
+        from app.services.websocket_manager import websocket_manager
+        return websocket_manager
+    except ImportError:
+        logger.warning("WebSocket manager not available")
+        return None
+
 # Initialize Supabase client using connection manager
 try:
     # Get Supabase client from connection manager
@@ -39,6 +49,42 @@ class ChatService:
         self.supabase = supabase
         self.rag_service = rag_service
         self.agent_service = agent_service
+
+    def _validate_and_convert_session_id(self, session_id: str) -> str:
+        """
+        Validate and convert session ID to proper UUID format.
+
+        Args:
+            session_id: Session ID to validate
+
+        Returns:
+            Valid UUID string
+
+        Raises:
+            ValueError: If session ID cannot be converted to valid UUID
+        """
+        try:
+            # Try to parse as UUID first
+            uuid_obj = uuid.UUID(session_id)
+            return str(uuid_obj)
+        except (ValueError, TypeError):
+            # If it's a timestamp (numeric string), convert to UUID
+            try:
+                # Check if it's a numeric timestamp
+                timestamp = int(session_id)
+                # Create a deterministic UUID from the timestamp
+                # This ensures the same timestamp always generates the same UUID
+                import hashlib
+                hash_input = f"session_{timestamp}".encode('utf-8')
+                hash_digest = hashlib.md5(hash_input).hexdigest()
+                # Format as UUID
+                uuid_str = f"{hash_digest[:8]}-{hash_digest[8:12]}-{hash_digest[12:16]}-{hash_digest[16:20]}-{hash_digest[20:32]}"
+                # Validate the generated UUID
+                uuid_obj = uuid.UUID(uuid_str)
+                logger.info(f"Converted timestamp session ID {session_id} to UUID {uuid_str}")
+                return str(uuid_obj)
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid session ID format: {session_id}")
 
     async def create_session(self, user_id: str, name: str, document_ids: List[str] = None) -> Dict[str, Any]:
         """
@@ -654,6 +700,9 @@ class ChatService:
             List of document IDs in the session
         """
         try:
+            # Validate and convert session ID
+            session_id = self._validate_and_convert_session_id(session_id)
+
             # Check if session exists and belongs to user
             if self.supabase:
                 # Try using service role key first to avoid RLS issues
@@ -723,6 +772,9 @@ class ChatService:
             Deletion status
         """
         try:
+            # Validate and convert session ID
+            session_id = self._validate_and_convert_session_id(session_id)
+
             # Check if session exists and belongs to user
             if self.supabase:
                 # Try using service role key first to avoid RLS issues
@@ -799,6 +851,9 @@ class ChatService:
             List of documents with their details
         """
         try:
+            # Validate and convert session ID
+            session_id = self._validate_and_convert_session_id(session_id)
+
             documents = []
 
             # Check if session exists and belongs to user
@@ -892,6 +947,9 @@ class ChatService:
             Session information
         """
         try:
+            # Validate and convert session ID
+            session_id = self._validate_and_convert_session_id(session_id)
+
             # Check if session exists and belongs to user
             if self.supabase:
                 # Try using service role key first to avoid RLS issues
@@ -968,6 +1026,9 @@ class ChatService:
             List of chat messages
         """
         try:
+            # Validate and convert session ID
+            session_id = self._validate_and_convert_session_id(session_id)
+
             # Check if session exists and belongs to user
             if self.supabase:
                 # Try using service role key first to avoid RLS issues
@@ -1060,6 +1121,9 @@ class ChatService:
             Chat response
         """
         try:
+            # Validate and convert session ID
+            session_id = self._validate_and_convert_session_id(session_id)
+
             # Check if session exists and belongs to user
             if self.supabase:
                 # Try using service role key first to avoid RLS issues
@@ -1158,6 +1222,9 @@ class ChatService:
                         "updated_at": datetime.now().isoformat()
                     }).eq("id", session_id).execute()
 
+            # Get WebSocket manager for real-time updates
+            ws_manager = get_websocket_manager()
+
             # Process the message
             if use_agent:
                 response = await self.agent_service.chat_with_agent(
@@ -1174,6 +1241,41 @@ class ChatService:
                     chat_history=chat_history,
                     session_id=session_id
                 )
+
+            # Emit streaming response via WebSocket if available
+            if ws_manager and response.get("response"):
+                try:
+                    # Split response into chunks for streaming effect
+                    response_text = response["response"]
+                    words = response_text.split()
+                    chunk_size = 3  # Send 3 words at a time
+
+                    for i in range(0, len(words), chunk_size):
+                        chunk = " ".join(words[i:i + chunk_size])
+                        is_final = (i + chunk_size) >= len(words)
+
+                        # Add space if not final chunk
+                        if not is_final:
+                            chunk += " "
+
+                        await ws_manager.emit_chat_response_chunk(
+                            chat_session_id=session_id,
+                            user_id=user_id,
+                            chunk=chunk,
+                            is_final=is_final,
+                            metadata={
+                                "sources": response.get("sources", []),
+                                "chart_data": response.get("chart_data")
+                            }
+                        )
+
+                        # Small delay between chunks for streaming effect
+                        import asyncio
+                        await asyncio.sleep(0.1)
+
+                except Exception as ws_error:
+                    logger.error(f"Error emitting WebSocket response: {str(ws_error)}")
+                    # Continue with normal response even if WebSocket fails
 
             # Store assistant message
             if self.supabase:

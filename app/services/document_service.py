@@ -19,6 +19,40 @@ logger = logging.getLogger(__name__)
 # Import connection manager
 from app.utils.connection_manager import connection_manager
 
+# Import WebSocket manager for real-time updates
+def get_websocket_manager():
+    """Get WebSocket manager instance."""
+    try:
+        from app.services.websocket_manager import websocket_manager
+        return websocket_manager
+    except ImportError:
+        logger.warning("WebSocket manager not available")
+        return None
+
+def safe_emit_websocket_update(ws_manager, coro):
+    """Safely emit WebSocket update handling event loop issues."""
+    if not ws_manager:
+        return
+
+    try:
+        import asyncio
+        # Check if we're already in an async context
+        try:
+            # Try to get the current event loop
+            loop = asyncio.get_running_loop()
+            # If we're in an async context, create a task instead of running directly
+            asyncio.create_task(coro)
+        except RuntimeError:
+            # No event loop running, safe to create a new one
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_until_complete(coro)
+            finally:
+                loop.close()
+    except Exception as ws_error:
+        logger.error(f"Error emitting WebSocket update: {str(ws_error)}")
+
 # Initialize Supabase client using connection manager
 try:
     # Get Supabase client from connection manager
@@ -37,6 +71,42 @@ class DocumentService:
     def __init__(self):
         """Initialize the document service."""
         self.supabase = supabase
+
+    def _validate_and_convert_session_id(self, session_id: str) -> str:
+        """
+        Validate and convert session ID to proper UUID format.
+
+        Args:
+            session_id: Session ID to validate
+
+        Returns:
+            Valid UUID string
+
+        Raises:
+            ValueError: If session ID cannot be converted to valid UUID
+        """
+        try:
+            # Try to parse as UUID first
+            uuid_obj = uuid.UUID(session_id)
+            return str(uuid_obj)
+        except (ValueError, TypeError):
+            # If it's a timestamp (numeric string), convert to UUID
+            try:
+                # Check if it's a numeric timestamp
+                timestamp = int(session_id)
+                # Create a deterministic UUID from the timestamp
+                # This ensures the same timestamp always generates the same UUID
+                import hashlib
+                hash_input = f"session_{timestamp}".encode('utf-8')
+                hash_digest = hashlib.md5(hash_input).hexdigest()
+                # Format as UUID
+                uuid_str = f"{hash_digest[:8]}-{hash_digest[8:12]}-{hash_digest[12:16]}-{hash_digest[16:20]}-{hash_digest[20:32]}"
+                # Validate the generated UUID
+                uuid_obj = uuid.UUID(uuid_str)
+                logger.info(f"Converted timestamp session ID {session_id} to UUID {uuid_str}")
+                return str(uuid_obj)
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid session ID format: {session_id}")
 
     async def upload_document(self, file: UploadFile, user_id: str, background_tasks: BackgroundTasks, session_id: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -81,8 +151,9 @@ class DocumentService:
                 file_url = s3_result["url"]
                 storage_type = "s3"
             else:
-                # Fallback to local storage
+                # Fallback to local storage with proper file extension
                 os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+                # Ensure file has proper extension for type detection
                 file_path = os.path.join(settings.UPLOAD_DIR, f"{file_id}.{file_ext}")
                 file_content = await file.read()
                 with open(file_path, "wb") as f:
@@ -145,6 +216,9 @@ class DocumentService:
             # If session_id is provided, associate document with the session
             if session_id and self.supabase:
                 try:
+                    # Validate and convert session ID
+                    session_id = self._validate_and_convert_session_id(session_id)
+
                     # Try using service role key first to avoid RLS issues
                     if settings.SUPABASE_SERVICE_KEY:
                         try:
@@ -572,19 +646,33 @@ class DocumentService:
         large_file_threshold = 5 * 1024 * 1024  # 5MB
         if file_size > large_file_threshold or file_size == 0:
             logger.info(f"Using Celery task for large document processing: {file_id} ({file_size} bytes)")
+            logger.info(f"File path for Celery: {file_url}, File type: {file_ext}")
             # Import here to avoid circular imports
             from app.workers.llama_index_tasks import process_file_with_llama_index
 
-            # Start Celery task
+            # Start Celery task with proper file type
             process_file_with_llama_index.delay(
                 file_id=file_id,
                 user_id=user_id,
                 file_path=file_url,
-                file_type=file_ext,
+                file_type=file_ext,  # This is already the extension string
                 session_id=session_id
             )
             return
         try:
+            # Get WebSocket manager for real-time updates
+            ws_manager = get_websocket_manager()
+
+            # Emit processing started update
+            safe_emit_websocket_update(
+                ws_manager,
+                ws_manager.emit_file_status_update(file_id, user_id, "processing", 0)
+            )
+            safe_emit_websocket_update(
+                ws_manager,
+                ws_manager.emit_processing_progress(file_id, user_id, "parsing", 10, "Starting document processing...")
+            )
+
             # Process the document
             result = document_processor.process_document(
                 file_path=file_url,
@@ -646,6 +734,23 @@ class DocumentService:
                     logger.error(f"Error updating document status: {str(update_error)}")
                     # Continue despite the error
                     logger.info(f"Document was processed successfully despite database update error for file ID: {file_id}")
+
+                # Emit completion update via WebSocket
+                safe_emit_websocket_update(
+                    ws_manager,
+                    ws_manager.emit_file_status_update(
+                        file_id, user_id, "processed", 100,
+                        metadata={
+                            "num_chunks": result.get("num_chunks", 0),
+                            "chunking_strategy": result.get("chunking_strategy", "unknown")
+                        }
+                    )
+                )
+                safe_emit_websocket_update(
+                    ws_manager,
+                    ws_manager.emit_processing_progress(file_id, user_id, "completed", 100, "Document processing completed!")
+                )
+
             elif self.supabase and result["status"] == "error":
                 try:
                     # Try using service role key first to avoid RLS issues

@@ -121,5 +121,5 @@ class QueryEngine:
         return {
             "response": response,
             "source_documents": documents,
-            "model_used": llm.model_name
+            "model_used": getattr(llm, 'model', getattr(llm, 'model_name', 'unknown'))
         }

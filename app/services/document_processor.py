@@ -215,20 +215,36 @@ class DocumentProcessor:
             Dictionary with processing results
         """
         try:
-            # Handle S3 storage
+            # Handle S3 storage and temporary files
             temp_file_path = None
             if storage_type == "s3":
                 from app.utils.s3_storage import s3_storage
                 # Extract the S3 key from the URL
                 s3_key = file_path.split(f"{s3_storage.bucket_name}/")[1]
-                # Download to a temporary file
-                temp_file_path = os.path.join(settings.UPLOAD_DIR, f"temp_{file_id}")
+                # Download to a temporary file with proper extension
+                file_ext = os.path.splitext(s3_key)[1]
+                temp_file_path = os.path.join(settings.UPLOAD_DIR, f"temp_{file_id}{file_ext}")
                 os.makedirs(os.path.dirname(temp_file_path), exist_ok=True)
                 content = s3_storage.download_file(s3_key)
                 with open(temp_file_path, "wb") as f:
                     f.write(content)
                 # Use the temporary file for processing
                 file_path = temp_file_path
+            elif file_path.startswith(os.path.join(settings.UPLOAD_DIR, "temp_")) and not os.path.splitext(file_path)[1]:
+                # Handle temporary files without extensions - try to add proper extension
+                detected_file_type = self.detect_file_type(file_path)
+                if detected_file_type == FileType.UNKNOWN:
+                    # Try to detect from file_type parameter
+                    if file_type and file_type != FileType.UNKNOWN:
+                        file_ext = f".{file_type.value}"
+                        new_temp_path = f"{file_path}{file_ext}"
+                        try:
+                            os.rename(file_path, new_temp_path)
+                            file_path = new_temp_path
+                            temp_file_path = new_temp_path
+                        except OSError as e:
+                            logger.warning(f"Could not rename temp file {file_path}: {str(e)}")
+                            temp_file_path = file_path
 
             # Detect file type
             file_type = self.detect_file_type(file_path)

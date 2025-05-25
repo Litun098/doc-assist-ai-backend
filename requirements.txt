@@ -31,3 +31,5 @@ pyotp==2.9.0
 qrcode==7.4.2
 pillow==9.5.0
 PyJWT==2.8.0
+python-socketio==5.7.2
+python-engineio==4.6.1

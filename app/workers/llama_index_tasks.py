@@ -14,6 +14,16 @@ from app.services.llama_index_service import llama_index_service, ChunkingStrate
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Import WebSocket manager for real-time updates
+def get_websocket_manager():
+    """Get WebSocket manager instance."""
+    try:
+        from app.services.websocket_manager import websocket_manager
+        return websocket_manager
+    except ImportError:
+        logger.warning("WebSocket manager not available in Celery worker")
+        return None
+
 
 @celery_app.task(name="process_file_with_llama_index")
 def process_file_with_llama_index(file_id: str, user_id: str, file_path: str = None, file_type: str = None, session_id: str = None):
@@ -58,9 +68,28 @@ def process_file_with_llama_index(file_id: str, user_id: str, file_path: str = N
         if isinstance(file_type, str):
             file_type = FileType(file_type)
 
+        # Get WebSocket manager for real-time updates
+        ws_manager = get_websocket_manager()
+
         # Update file status to processing
         # TODO: Update file status in database
         logger.info(f"Processing file {file_id} at path {file_path}")
+
+        # Emit processing started update
+        if ws_manager:
+            try:
+                # In Celery worker context, we need to create a new event loop
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(
+                    ws_manager.emit_file_status_update(file_id, user_id, "processing", 0)
+                )
+                loop.run_until_complete(
+                    ws_manager.emit_processing_progress(file_id, user_id, "parsing", 10, "Starting document parsing...")
+                )
+                loop.close()
+            except Exception as ws_error:
+                logger.warning(f"Error emitting WebSocket update in Celery worker: {str(ws_error)}")
 
         # Run the async processing function in a synchronous context
         loop = asyncio.get_event_loop()
@@ -68,16 +97,59 @@ def process_file_with_llama_index(file_id: str, user_id: str, file_path: str = N
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
+        # Emit progress updates during processing
+        if ws_manager:
+            loop.run_until_complete(
+                ws_manager.emit_processing_progress(file_id, user_id, "chunking", 30, "Creating document chunks...")
+            )
+
+        # Determine file type from file_type parameter or file path
+        if isinstance(file_type, str):
+            # Convert string to FileType enum
+            try:
+                file_type_enum = FileType(file_type.lower())
+            except ValueError:
+                logger.warning(f"Unknown file type: {file_type}, attempting to detect from file path")
+                # Try to detect from file extension
+                _, ext = os.path.splitext(file_path)
+                ext = ext.lower().lstrip('.')
+                if ext == 'pdf':
+                    file_type_enum = FileType.PDF
+                elif ext in ['docx', 'doc']:
+                    file_type_enum = FileType.DOCX
+                elif ext in ['xlsx', 'xls']:
+                    file_type_enum = FileType.XLSX
+                elif ext in ['pptx', 'ppt']:
+                    file_type_enum = FileType.PPTX
+                elif ext == 'txt':
+                    file_type_enum = FileType.TXT
+                else:
+                    file_type_enum = FileType.UNKNOWN
+        else:
+            file_type_enum = file_type
+
         result = loop.run_until_complete(
             llama_index_service.process_file(
                 file_path=file_path,
                 file_id=file_id,
                 user_id=user_id,
-                file_type=file_type,
+                file_type=file_type_enum,
                 chunking_strategy=ChunkingStrategy.HYBRID,
                 session_id=session_id
             )
         )
+
+        # Emit embedding progress
+        if ws_manager:
+            loop.run_until_complete(
+                ws_manager.emit_processing_progress(file_id, user_id, "embedding", 70, "Generating embeddings...")
+            )
+
+        # Emit indexing progress
+        if ws_manager:
+            loop.run_until_complete(
+                ws_manager.emit_processing_progress(file_id, user_id, "indexing", 90, "Indexing document...")
+            )
 
         # Save chunks to database
         # TODO: Save chunks to database
@@ -85,6 +157,22 @@ def process_file_with_llama_index(file_id: str, user_id: str, file_path: str = N
         # Update file status to processed
         # TODO: Update file status in database
         logger.info(f"File {file_id} processed successfully with {result.get('chunk_count', 0)} chunks")
+
+        # Emit completion update
+        if ws_manager:
+            loop.run_until_complete(
+                ws_manager.emit_file_status_update(
+                    file_id, user_id, "processed", 100,
+                    metadata={
+                        "page_count": result.get("page_count", 0),
+                        "has_images": result.get("has_images", False),
+                        "chunk_count": result.get("chunk_count", 0)
+                    }
+                )
+            )
+            loop.run_until_complete(
+                ws_manager.emit_processing_progress(file_id, user_id, "completed", 100, "Document processing completed!")
+            )
 
         return {
             "file_id": file_id,
@@ -103,6 +191,20 @@ def process_file_with_llama_index(file_id: str, user_id: str, file_path: str = N
 
         # Update file status to failed
         # TODO: Update file status in database
+
+        # Emit failure update
+        if ws_manager:
+            try:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(
+                    ws_manager.emit_file_status_update(file_id, user_id, "failed", 0, metadata={"error": error_message})
+                )
+                loop.run_until_complete(
+                    ws_manager.emit_error(user_id, "file_processing", f"Failed to process file: {error_message}", file_id=file_id)
+                )
+            except Exception as ws_error:
+                logger.error(f"Failed to emit WebSocket error update: {str(ws_error)}")
 
         # Re-raise the exception
         raise

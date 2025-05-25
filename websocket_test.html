@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AnyDocAI WebSocket Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .message {
+            background-color: #e2e3e5;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+            border-left: 4px solid #007bff;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border-left: 4px solid #dc3545;
+        }
+        .progress {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border-left: 4px solid #17a2b8;
+        }
+        .file-status {
+            background-color: #d4edda;
+            color: #155724;
+            border-left: 4px solid #28a745;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        input, button {
+            padding: 8px 12px;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        #messages {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AnyDocAI WebSocket Test</h1>
+        
+        <div id="status" class="status disconnected">
+            Disconnected
+        </div>
+        
+        <div class="controls">
+            <input type="text" id="userId" placeholder="User ID" value="test-user-123">
+            <button onclick="connect()">Connect</button>
+            <button onclick="disconnect()">Disconnect</button>
+            <button onclick="clearMessages()">Clear Messages</button>
+        </div>
+        
+        <div class="controls">
+            <h3>Test File Processing Updates</h3>
+            <input type="text" id="fileId" placeholder="File ID" value="test-file-456">
+            <button onclick="simulateFileProcessing()">Simulate File Processing</button>
+        </div>
+        
+        <div class="controls">
+            <h3>Test Chat Updates</h3>
+            <input type="text" id="chatSessionId" placeholder="Chat Session ID" value="test-chat-789">
+            <button onclick="simulateChatResponse()">Simulate Chat Response</button>
+        </div>
+        
+        <div id="messages"></div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script>
+        let socket = null;
+        let userId = null;
+        
+        function updateStatus(connected) {
+            const statusEl = document.getElementById('status');
+            if (connected) {
+                statusEl.textContent = `Connected as ${userId}`;
+                statusEl.className = 'status connected';
+            } else {
+                statusEl.textContent = 'Disconnected';
+                statusEl.className = 'status disconnected';
+            }
+        }
+        
+        function addMessage(message, type = 'message') {
+            const messagesEl = document.getElementById('messages');
+            const messageEl = document.createElement('div');
+            messageEl.className = `message ${type}`;
+            messageEl.innerHTML = `
+                <strong>${new Date().toLocaleTimeString()}</strong><br>
+                ${typeof message === 'object' ? JSON.stringify(message, null, 2) : message}
+            `;
+            messagesEl.appendChild(messageEl);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+        
+        function connect() {
+            userId = document.getElementById('userId').value;
+            if (!userId) {
+                alert('Please enter a User ID');
+                return;
+            }
+            
+            if (socket) {
+                socket.disconnect();
+            }
+            
+            // Connect to the WebSocket server
+            socket = io('http://localhost:8000', {
+                auth: {
+                    user_id: userId
+                }
+            });
+            
+            socket.on('connect', () => {
+                updateStatus(true);
+                addMessage(`Connected to WebSocket server with user ID: ${userId}`);
+            });
+            
+            socket.on('disconnect', () => {
+                updateStatus(false);
+                addMessage('Disconnected from WebSocket server');
+            });
+            
+            socket.on('file_status_update', (data) => {
+                addMessage(`File Status Update: ${JSON.stringify(data, null, 2)}`, 'file-status');
+            });
+            
+            socket.on('processing_progress', (data) => {
+                addMessage(`Processing Progress: ${data.stage} - ${data.progress}% - ${data.message}`, 'progress');
+            });
+            
+            socket.on('chat_response_chunk', (data) => {
+                addMessage(`Chat Response: ${data.chunk} (Final: ${data.is_final})`, 'message');
+            });
+            
+            socket.on('error', (data) => {
+                addMessage(`Error: ${data.error_type} - ${data.message}`, 'error');
+            });
+            
+            socket.on('connect_error', (error) => {
+                addMessage(`Connection Error: ${error.message}`, 'error');
+            });
+        }
+        
+        function disconnect() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+            updateStatus(false);
+        }
+        
+        function clearMessages() {
+            document.getElementById('messages').innerHTML = '';
+        }
+        
+        function simulateFileProcessing() {
+            const fileId = document.getElementById('fileId').value;
+            if (!fileId) {
+                alert('Please enter a File ID');
+                return;
+            }
+            
+            if (!socket || !socket.connected) {
+                alert('Please connect first');
+                return;
+            }
+            
+            // Join file room
+            socket.emit('join_file_room', { file_id: fileId });
+            addMessage(`Joined file room: ${fileId}`);
+            
+            // Simulate processing stages
+            const stages = [
+                { stage: 'parsing', progress: 10, message: 'Starting document parsing...' },
+                { stage: 'chunking', progress: 30, message: 'Creating document chunks...' },
+                { stage: 'embedding', progress: 70, message: 'Generating embeddings...' },
+                { stage: 'indexing', progress: 90, message: 'Indexing document...' },
+                { stage: 'completed', progress: 100, message: 'Document processing completed!' }
+            ];
+            
+            stages.forEach((stage, index) => {
+                setTimeout(() => {
+                    // Simulate receiving progress update
+                    socket.emit('processing_progress', {
+                        file_id: fileId,
+                        stage: stage.stage,
+                        progress: stage.progress,
+                        message: stage.message
+                    });
+                }, index * 2000);
+            });
+            
+            // Simulate final status update
+            setTimeout(() => {
+                socket.emit('file_status_update', {
+                    file_id: fileId,
+                    status: 'processed',
+                    progress: 100,
+                    metadata: {
+                        page_count: 5,
+                        chunk_count: 25,
+                        has_images: true
+                    }
+                });
+            }, stages.length * 2000);
+        }
+        
+        function simulateChatResponse() {
+            const chatSessionId = document.getElementById('chatSessionId').value;
+            if (!chatSessionId) {
+                alert('Please enter a Chat Session ID');
+                return;
+            }
+            
+            if (!socket || !socket.connected) {
+                alert('Please connect first');
+                return;
+            }
+            
+            // Join chat room
+            socket.emit('join_chat_room', { chat_session_id: chatSessionId });
+            addMessage(`Joined chat room: ${chatSessionId}`);
+            
+            // Simulate streaming response
+            const responseText = "This is a simulated streaming response from the AI assistant. ";
+            const chunks = responseText.split(' ');
+            
+            chunks.forEach((chunk, index) => {
+                setTimeout(() => {
+                    const isLast = index === chunks.length - 1;
+                    socket.emit('chat_response_chunk', {
+                        chat_session_id: chatSessionId,
+                        chunk: chunk + ' ',
+                        is_final: isLast
+                    });
+                }, index * 200);
+            });
+        }
+        
+        // Auto-connect on page load for testing
+        window.onload = () => {
+            // Uncomment to auto-connect
+            // connect();
+        };
+    </script>
+</body>
+</html>

@@ -4,7 +4,9 @@ Main application file.
 import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from contextlib import asynccontextmanager
+import socketio
 
 from app.api.api import api_router
 from app.middleware import add_security_headers_middleware, add_rate_limit_middleware
@@ -80,6 +82,9 @@ async def lifespan(_app: FastAPI):
     except Exception as e:
         logger.error(f"Error during shutdown: {str(e)}")
 
+# Initialize WebSocket manager
+from app.services.websocket_manager import websocket_manager
+
 # Create FastAPI app with lifespan handler
 app = FastAPI(
     title=settings.APP_NAME,
@@ -88,6 +93,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Mount SocketIO - Create the combined app
+socket_app = socketio.ASGIApp(websocket_manager.sio, app)
+
 # Add CORS middleware
 # Define allowed origins based on environment
 allowed_origins = [
@@ -95,6 +103,8 @@ allowed_origins = [
     "http://127.0.0.1:3000",
     "http://localhost:8000",  # FastAPI development server
     "http://127.0.0.1:8000",
+    "http://localhost:5500",  # Live Server port
+    "http://127.0.0.1:5500",
 ]
 
 # Add production origins if not in development
@@ -135,5 +145,7 @@ async def root():
 async def health_check():
     """Health check endpoint."""
     return {"status": "ok"}
+
+
 
 
