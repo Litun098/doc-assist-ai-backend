@@ -197,3 +197,4 @@ async def get_user_connection_status(user_id: str, current_user: dict = Depends(
             status_code=500,
             detail=f"Error checking user connection status: {str(e)}"
         )
+
