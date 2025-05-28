@@ -23,6 +23,7 @@ var/
 # Virtual Environment
 venv/
 ENV/
+anydocai-env/
 
 # Environment variables
 .env
@@ -39,6 +40,7 @@ logs/
 
 # Uploads
 uploads/
+temp_*
 
 # Redis
 *.rdb
@@ -47,10 +49,37 @@ uploads/
 .DS_Store
 Thumbs.db
 
+# Project specific files
 projectDetails.txt
 
-# Docs
+# Documentation and development notes
 project_docs/
+AnyDocAI_Frontend_Phase1.txt
+AnyDocAI_Frontend_Roadmap.txt
+AnyDocAI_API_Documentation.md
+AnyDocAI_Comprehensive_API_Guide.md
+AnyDocAI_Frontend_Implementation_Guide.md
+DOCUMENT_PROCESSING_FIXES.md
+README_AGENT.md
+RLS_ISSUES_SUMMARY.md
+RLS_PERFORMANCE_OPTIMIZATION.md
+WEBSOCKET_FRONTEND_IMPLEMENTATION.md
+*.csv
 
+
+# Test files in root directory (should be in tests/)
+test_*.py
+websocket_test.html
+
+# Celery artifacts
+celery/
+*.sqlite
+
+# Frontend development files
+frontend-auth-service.js
+
+# SQL migration files (if not needed in repo)
+fix_rls_policies.sql
+rls_policy_explanation.md
 
 AnyDocAI_Frontend_Phase1.txt

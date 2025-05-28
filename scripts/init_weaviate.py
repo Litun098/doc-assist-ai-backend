@@ -145,70 +145,46 @@ def init_weaviate():
                     }
                 ]
 
-                # Try to create the collection
-                client.collections.create(
-                    name=settings.LLAMAINDEX_INDEX_NAME,
-                    description="A collection of document chunks for retrieval",
-                    vectorizer_config=None,  # We'll provide our own vectors
-                    properties=properties
-                )
-                print(f"Successfully created collection {settings.LLAMAINDEX_INDEX_NAME} using v4 API")
-            except Exception as e:
-                print(f"Error creating collection with v4 API: {str(e)}")
-                # Try alternative v4 API format
+                # Try to create the collection with correct v4 API format
                 try:
-                    print("Trying alternative v4 API format...")
-                    # Some versions use different parameter names
+                    # Import the correct data types for v4 API
+                    from weaviate.classes.config import Property, DataType
+
+                    properties_v4 = [
+                        Property(name="content", data_type=DataType.TEXT, description="The text content of the chunk"),
+                        Property(name="file_id", data_type=DataType.TEXT, description="The ID of the file this chunk belongs to"),
+                        Property(name="user_id", data_type=DataType.TEXT, description="The ID of the user who owns this document"),
+                        Property(name="page_number", data_type=DataType.INT, description="The page number this chunk is from"),
+                        Property(name="chunk_index", data_type=DataType.INT, description="The index of this chunk within the file"),
+                        Property(name="chunking_strategy", data_type=DataType.TEXT, description="The chunking strategy used"),
+                        Property(name="heading", data_type=DataType.TEXT, description="The heading or title of the section"),
+                        Property(name="metadata", data_type=DataType.TEXT, description="Additional metadata about the chunk")
+                    ]
+
                     client.collections.create(
                         name=settings.LLAMAINDEX_INDEX_NAME,
                         description="A collection of document chunks for retrieval",
-                        vectorizer_config=None,  # We'll provide our own vectors
-                        properties=[
-                            {
-                                "name": "content",
-                                "dataType": ["text"],
-                                "description": "The text content of the chunk"
-                            },
-                            {
-                                "name": "file_id",
-                                "dataType": ["string"],
-                                "description": "The ID of the file this chunk belongs to"
-                            },
-                            {
-                                "name": "user_id",
-                                "dataType": ["string"],
-                                "description": "The ID of the user who owns this document"
-                            },
-                            {
-                                "name": "page_number",
-                                "dataType": ["int"],
-                                "description": "The page number this chunk is from"
-                            },
-                            {
-                                "name": "chunk_index",
-                                "dataType": ["int"],
-                                "description": "The index of this chunk within the file"
-                            },
-                            {
-                                "name": "chunking_strategy",
-                                "dataType": ["string"],
-                                "description": "The chunking strategy used (fixed_size or topic_based)"
-                            },
-                            {
-                                "name": "heading",
-                                "dataType": ["text"],
-                                "description": "The heading or title of the section (for topic-based chunks)"
-                            },
-                            {
-                                "name": "metadata",
-                                "dataType": ["text"],
-                                "description": "Additional metadata about the chunk"
-                            }
-                        ]
+                        properties=properties_v4
                     )
-                    print(f"Successfully created collection {settings.LLAMAINDEX_INDEX_NAME} using alternative v4 API")
-                except Exception as alt_e:
-                    print(f"Error creating collection with alternative v4 API: {str(alt_e)}")
+                except ImportError:
+                    # Fallback to simple creation without properties
+                    client.collections.create(
+                        name=settings.LLAMAINDEX_INDEX_NAME,
+                        description="A collection of document chunks for retrieval"
+                    )
+                print(f"Successfully created collection {settings.LLAMAINDEX_INDEX_NAME} using v4 API")
+            except Exception as e:
+                print(f"Error creating collection with v4 API: {str(e)}")
+                # Try simple collection creation without properties as fallback
+                try:
+                    print("Trying simple collection creation...")
+                    client.collections.create(
+                        name=settings.LLAMAINDEX_INDEX_NAME,
+                        description="A collection of document chunks for retrieval"
+                    )
+                    print(f"Successfully created collection {settings.LLAMAINDEX_INDEX_NAME} using simple creation")
+                except Exception as simple_e:
+                    print(f"Error with simple collection creation: {str(simple_e)}")
                     raise
         except AttributeError:
             # Fall back to v3 API
